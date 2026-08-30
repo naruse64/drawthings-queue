@@ -72,9 +72,15 @@ test/dtq-test.sh                                       # 結合テスト
 |---|---|
 | OS | macOS 26 系（Apple Silicon） |
 | アプリ | [Draw Things](https://drawthings.ai/) とそのモデル |
-| CLI | `draw-things-cli`（`brew install drawthings-cli`） |
+| CLI | `draw-things-cli` |
 | ビルド | Xcode Command Line Tools |
 | 任意 | `fswatch`（検知が速くなる。無くても動く） |
+
+```bash
+brew install drawthingsai/draw-things/draw-things-cli
+brew install fswatch          # 任意
+xcode-select --install        # 未導入なら
+```
 
 Mac が留守中にスリープしないこと（`pmset -g` で `sleep 0` を確認）。
 
