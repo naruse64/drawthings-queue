@@ -1,0 +1,59 @@
+#!/bin/bash
+# キューとワーカーの現況を一目で見る。
+set -uo pipefail
+
+DTQ_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$DTQ_HOME/lib/dtq-common.sh"
+
+LABEL="local.drawthings.queue"
+
+count_in() {
+  local d="$1"; shift
+  [ -d "$d" ] || { echo 0; return; }
+  find "$d" -maxdepth 1 -type f "$@" 2>/dev/null | wc -l | tr -d ' '
+}
+
+state="$(launchctl list 2>/dev/null | awk -v l="$LABEL" '$3==l {print "pid="$1" last_exit="$2}')"
+if [ -n "$state" ]; then
+  echo "ワーカー : 稼働中 ($state)"
+else
+  echo "ワーカー : 停止（launchd に登録がありません。bin/dtq-setup を実行）"
+fi
+
+if command -v fswatch >/dev/null 2>&1; then
+  echo "検知     : スイープ${SWEEP_INTERVAL}s + fswatch"
+else
+  echo "検知     : スイープ${SWEEP_INTERVAL}s のみ（fswatch 未導入）"
+fi
+
+if [ -f "$LOG_FILE" ] && tail -n 200 "$LOG_FILE" 2>/dev/null | grep -q 'キューを読めない'; then
+  echo "iCloud   : !! 読めていません"
+  echo "           確認ダイアログ未承認か、署名済みバンドル経由で起動していません。"
+  echo "           承認状況: システム設定 > プライバシーとセキュリティ > ファイルとフォルダ"
+  echo "           起動対象を確認: launchctl print gui/$(id -u)/$LABEL | grep program"
+  echo "           DrawThingsQueue.app を指していなければ bin/dtq-setup を再実行してください。"
+else
+  echo "iCloud   : $ICLOUD_ROOT"
+fi
+
+echo
+printf 'queue    : %s 件待ち\n'   "$(count_in "$Q_DIR" -name '*.txt' -o -name '*.json')"
+printf 'pending  : %s 件展開済み\n' "$(count_in "$PENDING_DIR")"
+printf 'running  : %s 件実行中\n'  "$(count_in "$RUNNING_DIR")"
+printf 'results  : %s 件\n'        "$(count_in "$RESULTS_DIR")"
+printf 'failed   : %s 件\n'        "$(count_in "$FAILED_DIR" -name '*.error.json')"
+printf 'thumbs   : %s 枚\n'        "$(count_in "$THUMBS_DIR")"
+
+running="$(find "$RUNNING_DIR" -maxdepth 1 -name '*.job.json' 2>/dev/null | head -1)"
+if [ -n "$running" ]; then
+  echo
+  echo "実行中のジョブ:"
+  printf '  %s\n' "$("$DTQ_PY" "$DTQ_EMIT" field "$running" job_id)"
+  printf '  %s\n' "$("$DTQ_PY" "$DTQ_EMIT" field "$running" prompt | cut -c1-70)"
+fi
+
+if [ -f "$LOG_FILE" ]; then
+  echo
+  echo "直近のログ ($LOG_FILE):"
+  tail -n 8 "$LOG_FILE" | sed 's/^/  /'
+fi

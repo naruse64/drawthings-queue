@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.drawthings.queue</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__AGENT__</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- launchd の PATH は最小限。fswatch(homebrew) を見つけられるようにする。 -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__LOG__</string>
+
+    <key>StandardErrorPath</key>
+    <string>__LOG__</string>
+
+    <key>WorkingDirectory</key>
+    <string>__HOME__</string>
+
+    <!-- ProcessType は Interactive にする。
+         draw-things-cli の Metal 処理はプロセスのスケジューリング優先度に
+         依存して失敗する。低い優先度だとモデル読込中に
+         ccv_nnc_mfa_encode_depalettize が precondition failure を起こし、
+         SIGTRAP で死ぬ（rc=133）。同一マシン・同一モデルでの実測:
+
+           ProcessType   ps優先度   3回中の成功
+           Adaptive          4        0
+           指定なし(Standard) 20        1
+           Interactive      31        3
+
+         ターミナルからは常に成功するため、launchd に載せるまで露見しない。
+         バッチ生成に Interactive は本来強すぎる指定だが、これより低いと
+         生成が安定しない。 -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

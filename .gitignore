@@ -1,0 +1,9 @@
+# 手元固有の設定。モデル名など環境ごとに違うものはここに書く（雛形は config.example.sh）
+config.local.sh
+
+# Claude Code への個人的な作業指示。ツール本体ではないため追跡しない
+CLAUDE.md
+
+.DS_Store
+__pycache__/
+*.pyc

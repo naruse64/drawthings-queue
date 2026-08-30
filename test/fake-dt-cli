@@ -1,0 +1,48 @@
+#!/bin/bash
+OUT=""; PF=""; NPF=""; SEED=""; CFG=""; W=""; H=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) OUT="$2"; shift 2;;
+    --prompt-file) PF="$2"; shift 2;;
+    --negative-prompt-file) NPF="$2"; shift 2;;
+    --seed) SEED="$2"; shift 2;;
+    --config-json) CFG="$2"; shift 2;;
+    --width) W="$2"; shift 2;;
+    --height) H="$2"; shift 2;;
+    *) shift;;
+  esac
+done
+# 呼ばれ方を記録して、あとで検証できるようにする
+{ echo "--- invocation ---"
+  echo "out=$OUT"; echo "seed=$SEED"; echo "cfg=$CFG"; echo "w=$W"; echo "h=$H"
+  echo "prompt=[$(cat "$PF" 2>/dev/null)]"
+  echo "negative=[$(cat "$NPF" 2>/dev/null)]"
+} >> "$DTQ_FAKE_LOG"
+
+# テスト用: 生成中に新しいファイルがキューへ届く状況を再現する
+if [ -n "${DTQ_FAKE_DROP:-}" ] && [ ! -f "$DTQ_FAKE_DROP.done" ]; then
+  printf 'dropped while a batch was running\n' > "$DTQ_FAKE_DROP"
+  : > "$DTQ_FAKE_DROP.done"
+fi
+
+case "${DTQ_FAKE_MODE:-ok}" in
+  fail)  echo "boom: simulated failure" >&2; exit 3;;
+  hang)  sleep 120; exit 0;;
+  flaky) # 1回目だけ失敗する
+         n=$(cat "$DTQ_FAKE_LOG.count" 2>/dev/null || echo 0); n=$((n+1))
+         echo "$n" > "$DTQ_FAKE_LOG.count"
+         if [ "$n" -eq 1 ]; then echo "transient" >&2; exit 3; fi;;
+esac
+
+PNG_B64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+BATCH=$(printf '%s' "$CFG" | /usr/bin/python3 -c 'import json,sys;d=sys.stdin.read();print(json.loads(d).get("batchSize",1) if d.strip() else 1)' 2>/dev/null || echo 1)
+if [ "${BATCH:-1}" -gt 1 ]; then
+  i=0
+  while [ "$i" -lt "$BATCH" ]; do
+    printf '%s' "$PNG_B64" | base64 -d > "${OUT%.png}-$(printf '%04d' $i).png"
+    i=$((i+1))
+  done
+else
+  printf '%s' "$PNG_B64" | base64 -d > "$OUT"
+fi
+exit 0

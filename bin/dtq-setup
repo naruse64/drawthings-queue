@@ -1,0 +1,250 @@
+#!/bin/bash
+# ディレクトリを作り、launchd エージェントを設置して起動する。
+set -uo pipefail
+
+DTQ_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$DTQ_HOME/lib/dtq-common.sh"
+
+LABEL="local.drawthings.queue"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+TEMPLATE="$DTQ_HOME/launchd/$LABEL.plist.template"
+APP_DIR="$STATE_ROOT/app"
+WORKER="$APP_DIR/bin/dtq-worker"
+APP_BUNDLE="$APP_DIR/DrawThingsQueue.app"
+AGENT="$APP_BUNDLE/Contents/MacOS/DrawThingsQueue"
+DOMAIN="gui/$(id -u)"
+
+unload_agent() {
+  launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null
+  # 旧来の load/unload で入れていた場合の保険
+  launchctl unload "$PLIST" 2>/dev/null
+  return 0
+}
+
+if [ "${1:-}" = "--uninstall" ]; then
+  unload_agent
+  rm -f "$PLIST"
+  echo "アンインストールしました: $LABEL"
+  echo "（ディレクトリ・ログ・画像は消していません）"
+  echo "  状態: $STATE_ROOT"
+  echo "  ※ フルディスクアクセスへの登録はしていないので、設定側の後片付けは不要です"
+  echo "  キュー: $ICLOUD_ROOT"
+  exit 0
+fi
+
+echo "== 依存の確認 =="
+missing=0
+for c in /usr/bin/jq /usr/bin/sips /usr/bin/shasum /usr/bin/lockf /usr/bin/brctl; do
+  if [ -x "$c" ]; then echo "  OK   $c"; else echo "  なし $c"; missing=1; fi
+done
+if [ -x "$DT_CLI" ]; then echo "  OK   $DT_CLI"; else echo "  なし $DT_CLI"; missing=1; fi
+if [ -x "$DTQ_PY" ]; then echo "  OK   $DTQ_PY"; else echo "  なし python3"; missing=1; fi
+if command -v fswatch >/dev/null 2>&1; then
+  echo "  OK   fswatch（検知が10秒以内に縮まります）"
+else
+  echo "  --   fswatch 未導入。スイープ${SWEEP_INTERVAL}秒間隔で動きます"
+  echo "       即応させたい場合: brew install fswatch"
+fi
+[ "$missing" -eq 0 ] || { echo; echo "必須の依存が足りません。中止します。"; exit 1; }
+
+echo
+echo "== ディレクトリの作成 =="
+ensure_dirs || exit 1
+echo "  iCloud: $ICLOUD_ROOT"
+echo "  状態  : $STATE_ROOT"
+echo "  画像  : $IMAGES_DIR"
+echo "  モデル: $MODELS_DIR"
+
+# iPhone から見たときに何を置く場所か分かるようにしておく。
+if [ ! -f "$Q_DIR/README" ]; then
+  cat > "$Q_DIR/README" <<'TXT'
+ここにプロンプトを置くと Mac が自動で画像を生成します。
+
+.txt を置く場合（1行1プロンプト。空行と # の行は無視）
+  a ceramic coffee cup on a wooden desk, morning light through a window
+  a black cat sleeping on a stack of old books, warm afternoon light
+
+.json を置く場合（細かく指定したいとき）
+  {"prompt": "...", "seed": 12345, "count": 3,
+   "loras": [{"file": "realisticsnapshotz_image_turbo_lora_f16.ckpt", "weight": 0.6}]}
+
+指定できるもの: title / prompt / negative_prompt / seed / steps /
+                width / height / batch / count / loras
+
+できあがりは ../thumbs/ にサムネイル、../results/ に詳細が出ます。
+失敗したものは ../failed/ に理由と一緒に置かれます。
+
+このファイルは拡張子が .txt / .json ではないので処理されません。
+TXT
+  echo "  README を置きました: $Q_DIR/README"
+fi
+
+echo
+echo "== 実行コードの配置 =="
+# launchd 配下のプロセスは ~/Documents や ~/Desktop を実行・読み取りできない
+# （TCC）。リポジトリをそのまま指すと Operation not permitted で起動できないため、
+# 保護対象外の場所へ配置してからそこを指す。
+mkdir -p "$APP_DIR"
+rm -rf "$APP_DIR/bin" "$APP_DIR/lib"
+cp -R "$DTQ_HOME/bin" "$DTQ_HOME/lib" "$APP_DIR/"
+chmod +x "$APP_DIR/bin/"*
+# 手元固有の設定も一緒に運ぶ。無ければリポジトリの既定値で動く。
+if [ -f "$DTQ_HOME/config.local.sh" ]; then
+  cp "$DTQ_HOME/config.local.sh" "$APP_DIR/config.local.sh"
+  echo "    config.local.sh を配置（モデル: $DT_MODEL）"
+else
+  rm -f "$APP_DIR/config.local.sh"
+  echo "    config.local.sh は無し。既定モデルで動作（$DT_MODEL）"
+fi
+echo "  $DTQ_HOME"
+echo "    → $APP_DIR （リポジトリを更新したら dtq-setup を再実行する）"
+
+echo
+echo "== モデルの取り込み =="
+# TCC: launchd 配下から Draw Things のコンテナを読むと「ほかのアプリからのデータ」の
+# 許可を毎回求められ、しかもエージェント再起動のたびに失効する。承認されるまで
+# 生成が止まるため無人運用が成立しない。必要なモデルだけローカルへ複製し、
+# ワーカーは --models-dir でそちらだけを見る。
+#
+# この複製は setup でのみ行う。setup はターミナルから動いていて権限を持つ。
+if [ ! -d "$DT_SOURCE_MODELS" ]; then
+  echo "  Draw Things のモデルディレクトリが見つかりません:"
+  echo "    $DT_SOURCE_MODELS"
+  exit 1
+fi
+mkdir -p "$MODELS_DIR"
+free_before=$(df -k "$MODELS_DIR" | awk 'NR==2{print $4}')
+copied=0; kept=0; missing=""
+for f in "${DT_REQUIRED_MODELS[@]}"; do
+  src="$DT_SOURCE_MODELS/$f"
+  dst="$MODELS_DIR/$f"
+  if [ ! -f "$src" ]; then missing="$missing $f"; continue; fi
+  if [ -f "$dst" ] && [ ! "$src" -nt "$dst" ]; then
+    kept=$((kept + 1))
+    continue
+  fi
+  # APFS のクローンが使えれば実ディスクを消費しない
+  if ! cp -c "$src" "$dst" 2>/dev/null; then
+    cp "$src" "$dst" || { echo "  複製に失敗: $f"; exit 1; }
+  fi
+  copied=$((copied + 1))
+done
+if [ -n "$missing" ]; then
+  echo "  次のファイルが Draw Things 側に見つかりません:$missing"
+  echo "  Draw Things アプリでモデルを取得してから、もう一度実行してください。"
+  exit 1
+fi
+free_after=$(df -k "$MODELS_DIR" | awk 'NR==2{print $4}')
+echo "  複製 $copied 件 / 変更なし $kept 件"
+echo "  $MODELS_DIR"
+echo "  論理サイズ $(du -sh "$MODELS_DIR" | cut -f1) / 実ディスク消費増 $(( (free_before - free_after) / 1024 )) MB"
+echo "  ※ Draw Things 側でモデルを更新したら、この setup を再実行して取り込み直します"
+
+echo
+echo "== エージェント（app バンドル）の構築 =="
+# TCC はプロセスの実体に許可を紐づける。シェルスクリプトを直接 launchd から
+# 起動すると実体は /bin/bash になり、スクリプトのパスに与えた許可が attach
+# しない。署名済み app バンドルを入口にすると TCC が識別でき、fork した
+# bash ワーカーはその許可を responsible process として継承する。
+SRC_C="$DTQ_HOME/launchd/agent/launcher.c"
+SRC_PLIST="$DTQ_HOME/launchd/agent/Info.plist"
+needs_build=0
+if [ ! -x "$AGENT" ]; then
+  needs_build=1
+elif [ "$SRC_C" -nt "$AGENT" ] || [ "$SRC_PLIST" -nt "$AGENT" ]; then
+  needs_build=1
+fi
+
+if [ "$needs_build" = "1" ]; then
+  if ! xcrun -f clang >/dev/null 2>&1; then
+    echo "  clang が見つかりません（Xcode Command Line Tools が必要）"
+    echo "  xcode-select --install を実行してから、もう一度この setup を走らせてください。"
+    exit 1
+  fi
+  rm -rf "$APP_BUNDLE"
+  mkdir -p "$APP_BUNDLE/Contents/MacOS"
+  cp "$SRC_PLIST" "$APP_BUNDLE/Contents/Info.plist"
+  if ! xcrun clang -O2 -Wall -Wextra -o "$AGENT" "$SRC_C"; then
+    echo "  ビルドに失敗しました"; exit 1
+  fi
+  # TCC がバンドルを識別できるよう ad-hoc 署名する
+  if ! codesign --force --sign - --identifier local.drawthings.queue.agent "$APP_BUNDLE" 2>/dev/null; then
+    echo "  署名に失敗しました"; exit 1
+  fi
+  codesign --verify --strict "$APP_BUNDLE" 2>/dev/null && echo "  ビルドと署名: OK"
+  echo "  $APP_BUNDLE"
+  echo "  ※ 初回起動時に iCloud Drive へのアクセス確認ダイアログが出ます。許可してください"
+else
+  echo "  変更がないので再構築しません: $APP_BUNDLE"
+fi
+
+echo
+echo "== launchd エージェントの設置 =="
+mkdir -p "$(dirname "$PLIST")"
+sed -e "s#__AGENT__#$AGENT#g" \
+    -e "s#__LOG__#$LOG_FILE#g" \
+    -e "s#__HOME__#$HOME#g" \
+    "$TEMPLATE" > "$PLIST"
+plutil -lint "$PLIST" >/dev/null || { echo "plist が不正です"; exit 1; }
+echo "  $PLIST"
+
+unload_agent
+if launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null; then
+  echo "  bootstrap 完了"
+else
+  echo "  bootstrap に失敗 → load で再試行"
+  launchctl load "$PLIST" || { echo "起動に失敗しました"; exit 1; }
+fi
+launchctl enable "$DOMAIN/$LABEL" 2>/dev/null
+
+echo
+echo "== 起動確認 =="
+# ログは切り詰めない。過去の記録を消してしまうと、後から不具合を追えなくなる。
+# 代わりに現在の行数を覚えておき、そこから先だけを見る。
+log_mark=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
+launchctl kickstart -k "$DOMAIN/$LABEL" 2>/dev/null
+i=0
+while [ "$i" -lt 15 ]; do
+  tail -n "+$((log_mark + 1))" "$LOG_FILE" 2>/dev/null | grep -q 'worker 起動\|ERROR' && break
+  sleep 1
+  i=$((i + 1))
+done
+
+# TCC はここでしか露見しない。setup 自身はターミナルから動いていて
+# フルディスクアクセスを持つため、同じ ls が通ってしまい判定に使えない。
+# launchd 側のログを見るのが唯一の確実な方法。
+probe="$Q_DIR/.dtq-setup-probe"
+: > "$probe" 2>/dev/null
+sleep 3
+if tail -n "+$((log_mark + 1))" "$LOG_FILE" 2>/dev/null | grep -q 'キューを読めない'; then
+  rm -f "$probe"
+  echo
+  echo "  !! ワーカーは起動しましたが iCloud Drive を読めていません。"
+  echo
+  echo "  考えられる原因は2つです。"
+  echo
+  echo "  (a) 確認ダイアログをまだ承認していない"
+  echo "      「iCloud Drive のファイルにアクセスしようとしています」が出たら許可してください。"
+  echo "      すでに拒否した場合は、システム設定 > プライバシーとセキュリティ >"
+  echo "      ファイルとフォルダ で DrawThings Queue をオンにします。"
+  echo
+  echo "  (b) 署名済み app バンドルを経由せずに起動している"
+  echo "      素のスクリプトは身元を特定できないため、ダイアログすら出ず拒否されます。"
+  echo "      確認する点:"
+  echo "    1. 起動対象がバンドルを指しているか"
+  echo "         launchctl print $DOMAIN/$LABEL | grep program"
+  echo "    2. バンドルの署名が壊れていないか"
+  echo "         codesign --verify --strict \"$APP_BUNDLE\""
+  echo "    3. どちらか駄目なら、この setup をもう一度実行する"
+  echo
+  echo "  （フルディスクアクセスへの手動追加は不要です。スクリプトに与えても効きません）"
+  echo "  状況の確認: $DTQ_HOME/bin/dtq-status"
+  echo
+else
+  rm -f "$probe"
+  echo "  OK  iCloud Drive を読めています"
+fi
+
+echo
+echo "== 状態 =="
+"$DTQ_HOME/bin/dtq-status"
