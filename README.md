@@ -59,11 +59,32 @@ bin/dtq-setup --uninstall                              # 停止・登録解除
 test/dtq-test.sh                                       # 結合テスト
 ```
 
+## dtp — プロンプト作成の補助
+
+日本語のシーン記述からプロンプトを組み立て、語彙の効果を実測する別の CLI。
+ワーカーとは実行時に繋がらない。
+
+```bash
+bin/dtp lint    scene.txt      # 書き忘れ・SD1.5 語・重み記法を検査
+bin/dtp compose scene.txt      # プロンプトを組み立てる
+bin/dtp job     scene.txt      # dtq の job JSON にする
+bin/dtp ab scene.txt --slot 光 --variants "逆光" "順光" "夕方の斜光"
+test/dtp-test.sh               # 単体テスト
+```
+
+このモデルのテキストエンコーダは Qwen3-VL 4B で、**日本語がそのまま通る**。
+翻訳も語彙辞書も持たず、書き忘れを潰すことだけをする。`ab` は1スロットだけ振って
+同一シードで生成し、画素差を測る — 同一プロンプトでも画像はビット一致しない
+（平均差 4.85/255）ので、その下限に対する倍率で「効いたのか」を判定する。
+
+詳細は [docs/dtp.md](docs/dtp.md)、測定の根拠は [docs/findings.md](docs/findings.md) D 章。
+
 ## ドキュメント
 
 | ファイル | 内容 |
 |---|---|
-| [docs/spec.md](docs/spec.md) | 仕様。入力形式・動作・設定値・性能 |
+| [docs/spec.md](docs/spec.md) | dtq の仕様。入力形式・動作・設定値・性能 |
+| [docs/dtp.md](docs/dtp.md) | dtp の仕様。シーン記述・A/B テスト |
 | [docs/findings.md](docs/findings.md) | 製造・テスト工程で判明した知見と、設計判断の理由 |
 
 ## 必要なもの
@@ -91,9 +112,11 @@ Mac が留守中にスリープしないこと（`pmset -g` で `sleep 0` を確
 | `bin/dtq-setup` | 導入・更新 |
 | `bin/dtq-worker` | ワーカー本体 |
 | `bin/dtq-status` | 現況表示 |
+| `bin/dtp` | プロンプト作成の補助（ワーカーとは独立） |
 | `lib/` | 設定・入力検証・JSON 組み立て |
 | `launchd/` | plist テンプレートと app バンドルの材料 |
-| `test/` | 結合テスト（164件） |
+| `samples/` | 入力例 |
+| `test/` | テスト（dtq 164件 / dtp 52件） |
 | `config.example.sh` | 手元設定の雛形 |
 
 ## ライセンス
