@@ -574,15 +574,15 @@ printf 'first line prompt\nsecond line prompt\n' > "$Q/plain.txt"
 sweep
 check "2枚生成される"                  "$(nfiles "$SB/images")" 2
 
-banner "22d. count の上限は 100"
+banner "22d. count の上限は 200"
 reset_sandbox
-printf '{"prompt":"many","seed":1,"count":100}' > "$Q/many.json"
+printf '{"prompt":"many","seed":1,"count":200}' > "$Q/many.json"
 sweep
-check "100 は通る"                     "$(nfiles "$SB/images")" 100
+check "200 は通る"                     "$(nfiles "$SB/images")" 200
 reset_sandbox
-printf '{"prompt":"too many","seed":1,"count":101}' > "$Q/toomany.json"
+printf '{"prompt":"too many","seed":1,"count":201}' > "$Q/toomany.json"
 sweep
-check "101 は弾く"                     "$(jq -r .error_kind "$(find "$FL" -name '*.error.json'|head -1)")" "out_of_range"
+check "201 は弾く"                     "$(jq -r .error_kind "$(find "$FL" -name '*.error.json'|head -1)")" "out_of_range"
 
 # ---------------------------------------------------------------- 結果
 banner "結果"
