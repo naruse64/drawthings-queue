@@ -1,0 +1,146 @@
+#!/bin/bash
+# dtp — シーン記述からプロンプトを組み立て、語彙の効果を実測する。
+#
+# dtq（キューのワーカー）とは実行時に一切繋がらない。共有するのは
+# config.local.sh のモデル設定だけ。出力は dtq の job JSON にできるので、
+# 繋ぎたくなったら queue/ に置くだけで済む。
+#
+# 設計根拠は docs/findings.md D 章。翻訳も語彙辞書も持たない。
+set -uo pipefail
+
+DTP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCENE_PY="$DTP_ROOT/lib/dtp_scene.py"
+DIFF_PY="$DTP_ROOT/lib/dtp_diff.py"
+
+# モデル設定だけ dtq と共有する。dtq-common.sh は読み込んでも副作用がない
+# （ディレクトリ作成などはすべて関数の中）。
+. "$DTP_ROOT/lib/dtq-common.sh"
+
+OUT_DIR="${DTP_OUT_DIR:-$IMAGES_DIR}"
+
+die() { printf 'エラー: %s\n' "$1" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+使い方: dtp <サブコマンド> [引数]
+
+  compose <scene>            プロンプトを組み立てて出力する
+  lint    <scene>            検査だけする（書き忘れ・SD1.5 語・重み記法）
+  job     <scene>            dtq の job JSON を出力する
+  ab      <scene> --slot <名> --variants <値> [<値>...]
+                             1スロットだけ振って同一シードで生成し、画素差を測る
+  diff    <a.png> <b.png>    生成済み2枚の画素差を測る
+
+シーン記述の書式（`キー: 値`、# はコメント）:
+
+  場所:   夕方の喫茶店の窓際
+  主題:   20代の女性が席に座っている
+  服装:   ベージュのざっくりしたニットを着ている
+  光:     窓からの逆光で、髪の輪郭が明るく光っている
+  雰囲気: 少し憂鬱そうな、物思いにふける表情
+  カメラ: 中望遠レンズ、浅い被写界深度で、背景の店内は大きくぼけている
+  媒体:   フィルム写真
+  seed:   424242
+  width:  832
+  height: 1216
+
+日本語のまま生成する。翻訳しない（docs/findings.md D-1, D-3）。
+EOF
+}
+
+# 生成1枚。プロンプトはファイル経由で渡す（長文と日本語の引用符事故を避ける）。
+generate() {
+  local prompt_file="$1" out="$2" seed="$3" steps="$4" width="$5" height="$6"
+  local args=(
+    generate
+    --model "$DT_MODEL"
+    --models-dir "$MODELS_DIR"
+    --prompt-file "$prompt_file"
+    --steps "$steps"
+    --seed "$seed"
+    --no-download-missing
+    -o "$out"
+  )
+  [ -n "$width" ] && args+=(--width "$width" --height "$height")
+  "$DT_CLI" "${args[@]}" >/dev/null 2>&1
+}
+
+cmd_ab() {
+  local scene="" slot="" variants=() seed="" steps="" width="" height=""
+  scene="$1"; shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --slot)     slot="$2"; shift 2 ;;
+      --variants) shift; while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do variants+=("$1"); shift; done ;;
+      --seed)     seed="$2"; shift 2 ;;
+      *) die "ab: 未知の引数 $1" ;;
+    esac
+  done
+  [ -n "$slot" ] || die "ab: --slot が必要"
+  [ "${#variants[@]}" -ge 2 ] || die "ab: --variants は2つ以上"
+
+  # trap は関数を抜けたあとに走るので、ローカル変数にすると set -u で落ちる。
+  AB_TMP="$(mktemp -d)"
+  trap 'rm -rf "${AB_TMP:-}"' EXIT
+
+  # シーン側のパラメータを取り出す。--seed の指定があれば優先する。
+  # ここでの job はパラメータを取り出すためだけ。警告は変種を入れたあとに出す。
+  local job
+  job="$(python3 "$SCENE_PY" job "$scene" 2>"$AB_TMP/joberr")" \
+    || { cat "$AB_TMP/joberr" >&2; exit 2; }
+  [ -n "$seed" ] || seed="$(printf '%s' "$job" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("seed",""))')"
+  [ -n "$seed" ] || die "ab: seed が要る。シーンに書くか --seed で渡す（同一シードでないと比較にならない）"
+  steps="$(printf '%s' "$job" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("steps",8))')"
+  width="$(printf '%s' "$job"  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("width",""))')"
+  height="$(printf '%s' "$job" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("height",""))')"
+
+  [ -x "$DT_CLI" ] || die "draw-things-cli が見つからない: $DT_CLI"
+  mkdir -p "$OUT_DIR" || die "出力先を作れない: $OUT_DIR"
+
+  local ts; ts="$(date +%Y%m%d-%H%M%S)"
+  # 日本語のスロット名はファイル名に使えないので、使える文字だけ残す。
+  # 何も残らなければ連番だけにする（ab-ab-0 のような重複を避ける）。
+  local tag; tag="$(printf '%s' "$slot" | tr -c 'A-Za-z0-9' '-' | sed 's/-*$//;s/^-*//')"
+  [ -z "$tag" ] || tag="$tag-"
+
+  printf 'スロット「%s」を %d 通りで比較（seed=%s）\n\n' "$slot" "${#variants[@]}" "$seed"
+
+  local images=() i=0 v
+  for v in "${variants[@]}"; do
+    local pf="$AB_TMP/p$i.txt"
+    if ! python3 "$SCENE_PY" compose "$scene" --set "$slot=$v" > "$pf" 2>"$AB_TMP/err$i"; then
+      cat "$AB_TMP/err$i" >&2; exit 2
+    fi
+    # 警告は変種ごとに同じ内容になるので1件目だけ出す
+    [ "$i" -eq 0 ] && [ -s "$AB_TMP/err$i" ] && sed 's/^/  /' "$AB_TMP/err$i" >&2
+    local out="$OUT_DIR/ab-$tag$i""_${seed}_${ts}.png"
+    printf '  [%d] %s\n' "$i" "$v"
+    printf '      %s\n' "$(cat "$pf")"
+    if ! generate "$pf" "$out" "$seed" "$steps" "$width" "$height"; then
+      die "生成に失敗した（[$i] $v）"
+    fi
+    printf '      → %s\n\n' "$out"
+    images+=("$out")
+    i=$((i + 1))
+  done
+
+  printf '画素差（ノイズ下限 4.85 = 同一プロンプトを2回実行したときの差）\n\n'
+  local a b
+  for a in $(seq 0 $(( ${#images[@]} - 2 )) ); do
+    for b in $(seq $((a + 1)) $(( ${#images[@]} - 1 )) ); do
+      printf '  [%d] vs [%d]  %s\n' "$a" "$b" \
+        "$(python3 "$DIFF_PY" "${images[$a]}" "${images[$b]}")"
+    done
+  done
+}
+
+case "${1:-}" in
+  compose|lint|job) [ $# -ge 2 ] || die "$1: シーンファイルが要る"
+                    python3 "$SCENE_PY" "$1" "${@:2}" ;;
+  ab)               [ $# -ge 2 ] || die "ab: シーンファイルが要る"
+                    cmd_ab "${@:2}" ;;
+  diff)             [ $# -eq 3 ] || die "diff: 画像2枚を渡す"
+                    python3 "$DIFF_PY" "$2" "$3" ;;
+  -h|--help|help|"") usage ;;
+  *)                die "未知のサブコマンド: $1（dtp --help）" ;;
+esac
