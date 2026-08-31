@@ -1,0 +1,31 @@
+#!/bin/bash
+# dtp の ab テスト用スタブ。プロンプト内容に応じて別の画像を書く。
+# 固定画像だと「変種ごとに生成しているか」を確かめられないため。
+OUT=""; PF=""; SEED=""; W=64; H=64
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) OUT="$2"; shift 2;;
+    --prompt-file) PF="$2"; shift 2;;
+    --seed) SEED="$2"; shift 2;;
+    --width) W="$2"; shift 2;;
+    --height) H="$2"; shift 2;;
+    *) shift;;
+  esac
+done
+[ -n "${DTP_FAKE_LOG:-}" ] && printf 'out=%s seed=%s w=%s h=%s prompt=[%s]\n' \
+  "$OUT" "$SEED" "$W" "$H" "$(cat "$PF" 2>/dev/null)" >> "$DTP_FAKE_LOG"
+/usr/bin/python3 - "$OUT" "$PF" "$W" "$H" <<'PY'
+import hashlib, os, struct, sys, zlib
+out, pf, w, h = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+text = open(pf, "rb").read() if os.path.exists(pf) else b""
+shade = hashlib.sha256(text).digest()[0]        # プロンプトで色が決まる
+rows = b"".join(b"\x00" + bytes([shade] * w * 3) for _ in range(h))
+def chunk(tag, data):
+    c = tag + data
+    return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xffffffff)
+png = b"\x89PNG\r\n\x1a\n"
+png += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+png += chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+open(out, "wb").write(png)
+PY
+exit 0
