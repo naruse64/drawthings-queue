@@ -43,6 +43,19 @@ check "無ければ足し、有れば足さない" \
 f=$(scene mark '主題: 誰だろう？\n')
 check "？ も文末として扱う" "$("$DTP" compose "$f" 2>/dev/null)" "誰だろう？"
 
+banner "2b. 文末記号は文字種で決める（英語に「。」を付けない）"
+f=$(scene en '主題: Japanese 21 yo woman\n場所: Waikiki beach\nカメラ: cowboy shot\n')
+check "英語は . で区切る" \
+  "$("$DTP" compose "$f" 2>/dev/null)" "Waikiki beach. Japanese 21 yo woman. cowboy shot."
+
+f=$(scene enperiod '主題: a woman.\n場所: a beach.\n')
+check "既に . があれば足さず間だけ空ける" \
+  "$("$DTP" compose "$f" 2>/dev/null)" "a beach. a woman."
+
+f=$(scene mixed '主題: Japanese 21 yo woman\n場所: 夕方の喫茶店\n')
+check "和英が混ざっても壊れない" \
+  "$("$DTP" compose "$f" 2>/dev/null)" "夕方の喫茶店。Japanese 21 yo woman."
+
 banner "3. コメントと空行と全角コロン"
 f=$(scene fmt '# これはコメント\n\n主題： 女性\n場所:喫茶店\n')
 check "# と空行を飛ばし、全角コロンも読む" \
@@ -194,6 +207,11 @@ check "variants が1つならエラー" "$?" "1"
 
 "$DTP" ab "$f" --variants a b >/dev/null 2>&1
 check "--slot が無ければエラー" "$?" "1"
+
+banner "15b. slots は CLI から呼べる"
+f=$(scene slotsub '主題: 女性\n光: 逆光\n')
+check "記入済みだけ JSON で返る" \
+  "$("$DTP" slots "$f" 2>/dev/null)" '{"主題": "女性", "光": "逆光"}'
 
 banner "16. ab を通しで動かす（CLI はスタブ）"
 mkdir -p "$SB/out" "$SB/models"
