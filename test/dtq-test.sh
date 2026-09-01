@@ -584,6 +584,78 @@ printf '{"prompt":"too many","seed":1,"count":201}' > "$Q/toomany.json"
 sweep
 check "201 は弾く"                     "$(jq -r .error_kind "$(find "$FL" -name '*.error.json'|head -1)")" "out_of_range"
 
+# ---------------------------------------------------------------- 23
+banner "23. シーン記述（dtp のスロット形式）をキューが受ける"
+reset_sandbox
+cat > "$Q/scene.txt" <<'S'
+# コメントは読み飛ばす
+title:    Beach
+主題:     Japanese 21 yo woman
+場所:     Waikiki beach
+服装:     white bikini
+光:       bright sunny weather
+negative: blurry, distorted, text
+lora:     realisticsnapshotz:0.4
+count:    3
+S
+sweep
+check "count のぶん生成される"     "$(nfiles "$SB/images")" 3
+check "  failed は出ない"          "$(nfiles "$FL")" 0
+j="$(find "$RS" -name '*-000.result.json' | head -1)"
+check "  スロットが規定順に並ぶ" \
+  "$(jq -r .prompt "$j")" "Waikiki beach. Japanese 21 yo woman. white bikini. bright sunny weather."
+check "  negative が載る"          "$(jq -r .negative_prompt "$j")" "blurry, distorted, text"
+check "  lora が短縮名から解決される" \
+  "$(jq -r '.loras[0].file' "$j")" "realisticsnapshotz_image_turbo_lora_f16.ckpt"
+check "  重みも載る"               "$(jq -r '.loras[0].weight' "$j")" "0.4"
+
+banner "23b. シーンと判定したら1行1プロンプトに落とさない"
+reset_sandbox
+printf '主題: 女性
+これはスロットの形をしていない行
+' > "$Q/broken.txt"
+sweep
+check "画像を作らない"             "$(nfiles "$SB/images")" 0
+check "failed に落ちる"            "$(jq -r .error_kind "$(find "$FL" -name '*.error.json'|head -1)")" "invalid_scene"
+
+reset_sandbox
+printf '場所: 喫茶店
+' > "$Q/noreq.txt"
+sweep
+check "主題が無ければ failed"      "$(jq -r .error_kind "$(find "$FL" -name '*.error.json'|head -1)")" "invalid_scene"
+check "  画像は作らない"           "$(nfiles "$SB/images")" 0
+
+banner "23c. 既存の形式を巻き込まない"
+reset_sandbox
+printf 'a red cube on a table
+another prompt here
+' > "$Q/plain.txt"
+sweep
+check "通常の .txt は1行1プロンプトのまま" "$(nfiles "$SB/images")" 2
+
+reset_sandbox
+printf 'a woman at 8:00 in the morning
+' > "$Q/colon.txt"
+sweep
+check "行中のコロンは誤検出しない"  "$(nfiles "$SB/images")" 1
+
+reset_sandbox
+printf '{"prompt":"json still works","seed":1}' > "$Q/j.json"
+sweep
+check "JSON は従来どおり"          "$(nfiles "$SB/images")" 1
+
+banner "23d. 使えない LoRA は生成前に止める"
+reset_sandbox
+printf '主題: 女性
+lora: nosuch:0.5
+' > "$Q/badlora.txt"
+sweep
+check "failed に落ちる"            "$(jq -r .error_kind "$(find "$FL" -name '*.error.json'|head -1)")" "invalid_scene"
+# grep -c は不一致でも 0 を出力して非ゼロ終了する。`|| echo 0` を足すと
+# 両方走って "0\n0" になるため、変数に取ってから既定値を当てる。
+n="$(grep -c 'invocation' "$DTQ_FAKE_LOG" 2>/dev/null)"
+check "  CLI は呼ばれない"         "${n:-0}" "0"
+
 # ---------------------------------------------------------------- 結果
 banner "結果"
 printf '  成功 %d / 失敗 %d\n\n' "$PASS" "$FAIL"

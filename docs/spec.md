@@ -110,6 +110,24 @@ a black cat sleeping on a stack of old books, warm afternoon light
 
 未知のフィールドはエラーにする。タイプミスを黙って無視しないため。
 
+### シーン記述
+
+`主題: …` のスロット形式でも投入できる。判定は**最初の内容行がスロット名＋
+コロン**かどうかだけで、いったんシーンと判定したら以降の行が壊れていても
+1行1プロンプトには落とさず `failed/` に送る（JSON と同じ fail-closed）。
+
+```
+title:    Beach
+主題:     Japanese 21 yo woman
+場所:     Waikiki beach
+光:       bright sunny weather
+negative: blurry, distorted, text
+lora:     zit_jpwoman01:0.6
+count:    30
+```
+
+スロットの一覧と組み立て規則は [dtp.md](dtp.md)。
+
 **LoRA ホワイトリスト**は `config.local.sh` の `DT_LORAS` で決まる。ここに無いものは
 ジョブ検証の段階で弾く。別モデル向けの LoRA を誤って指定しても生成前に止められる。
 

@@ -68,6 +68,7 @@ test/dtq-test.sh                                       # 結合テスト
 bin/dtp lint    scene.txt      # 書き忘れ・SD1.5 語・重み記法を検査
 bin/dtp compose scene.txt      # プロンプトを組み立てる
 bin/dtp job     scene.txt      # dtq の job JSON にする
+                               # シーン記述はそのまま queue/ に置いてもよい
 bin/dtp ab scene.txt --slot 光 --variants "逆光" "順光" "夕方の斜光"
 test/dtp-test.sh               # 単体テスト
 ```
@@ -116,7 +117,7 @@ Mac が留守中にスリープしないこと（`pmset -g` で `sleep 0` を確
 | `lib/` | 設定・入力検証・JSON 組み立て |
 | `launchd/` | plist テンプレートと app バンドルの材料 |
 | `samples/` | 入力例 |
-| `test/` | テスト（dtq 164件 / dtp 57件） |
+| `test/` | テスト（dtq 179件 / dtp 68件） |
 | `config.example.sh` | 手元設定の雛形 |
 
 ## ライセンス
