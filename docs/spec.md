@@ -106,7 +106,7 @@ a black cat sleeping on a stack of old books, warm afternoon light
 | `width` / `height` | int | モデル推奨（1024） | 512〜2048 の64の倍数。**両方セットで指定** |
 | `batch` | int | 1 | 1〜4。同一 seed のバリエーション |
 | `count` | int | 1 | 1〜200。seed を +1 ずつずらして反復 |
-| `loras` | array | なし | ホワイトリストのみ。`weight` 0.1〜1.0 |
+| `loras` | array | なし | OKリストのみ。`weight` 0.1〜1.0 |
 
 未知のフィールドはエラーにする。タイプミスを黙って無視しないため。
 
@@ -128,7 +128,7 @@ count:    30
 
 スロットの一覧と組み立て規則は [dtp.md](dtp.md)。
 
-**LoRA ホワイトリスト**は `config.local.sh` の `DT_LORAS` で決まる。ここに無いものは
+**使用を許可する LoRA のリスト（OKリスト）**は `config.local.sh` の `DT_LORAS` で決まる。ここに無いものは
 ジョブ検証の段階で弾く。別モデル向けの LoRA を誤って指定しても生成前に止められる。
 
 **モデルはジョブから指定できない。** 未取得のモデル名を書かれると必ず失敗し、
@@ -298,7 +298,7 @@ test/dtq-test.sh                                      # 結合テスト
 
 - 完了通知（ntfy / Pushover）
 - img2img（入力画像も queue に置く方式）
-- モデル切替のホワイトリスト解禁
+- モデル切替の解禁（使用を許可するモデルのリストを設ける）
 - 夜間限定モード（iPhone アプリとの GPU 競合を避ける）
 
 ---

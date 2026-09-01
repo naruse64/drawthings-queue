@@ -162,9 +162,9 @@ f=$(scene lnoc '主題: 女性\nlora: realisticsnapshotz\n')
 f=$(scene bbad '主題: 女性\nbatch: 5\n')
 "$DTP" job "$f" >/dev/null 2>&1; check "batch 5 はエラー" "$?" "2"
 
-# 曖昧な前方一致は候補を出して止める（既定の白名簿は2件で衝突しないので差し替える）
+# 曖昧な前方一致は候補を出して止める（既定のOKリストは2件で衝突しないので差し替える）
 printf '主題: 女性\nlora: style:0.5\n' > "$SB/amb.txt"
-r="$(DTQ_LORA_WHITELIST="$(printf 'style_a.ckpt\nstyle_b.ckpt\n')" \
+r="$(DTQ_LORA_ALLOWLIST="$(printf 'style_a.ckpt\nstyle_b.ckpt\n')" \
      python3 "$ROOT/lib/dtp_scene.py" job "$SB/amb.txt" 2>&1)"
 printf '%s\n' "$r" | grep -q '2 件に一致' && ok "曖昧な LoRA 名は止める" \
   || bad "曖昧な LoRA 名は止める" "$r"
@@ -173,7 +173,7 @@ banner "12. job JSON が dtq の検証を通る"
 f=$(scene forq '主題: 女性が座っている\n場所: 喫茶店\nseed: 1\n')
 "$DTP" job "$f" 2>/dev/null > "$SB/j.json"
 mkdir -p "$SB/out" "$SB/ledger"
-DTQ_LORA_WHITELIST="" python3 "$ROOT/lib/dtq_parse.py" \
+DTQ_LORA_ALLOWLIST="" python3 "$ROOT/lib/dtq_parse.py" \
   --src "$SB/j.json" --src-name j.json --sha8 deadbeef --mtime 1 \
   --outdir "$SB/out" --ledger "$SB/ledger" >/dev/null 2>&1
 check "dtq_parse.py が受理する" "$?" "0"

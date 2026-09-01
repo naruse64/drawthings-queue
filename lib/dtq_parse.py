@@ -30,9 +30,9 @@ DEFAULT_STEPS = 8
 #
 # 実体は dtq-common.sh の DT_LORAS で、環境変数として渡ってくる。
 # bash 側と二重管理すると必ずずれるため、ここでは既定値だけ持つ。
-LORA_WHITELIST = set(
+LORA_ALLOWLIST = set(
     line.strip()
-    for line in os.environ.get("DTQ_LORA_WHITELIST", "").splitlines()
+    for line in os.environ.get("DTQ_LORA_ALLOWLIST", "").splitlines()
     if line.strip()
 ) or {"realisticsnapshotz_image_turbo_lora_f16.ckpt"}
 
@@ -206,11 +206,11 @@ def normalize(raw, index):
         if extra:
             raise Invalid("unknown_field", "loras に未知のキー %s" % ", ".join(extra))
         name = lora.get("file")
-        if name not in LORA_WHITELIST:
+        if name not in LORA_ALLOWLIST:
             raise Invalid(
                 "lora_not_allowed",
                 "LoRA '%s' は許可されていない。使えるのは: %s"
-                % (name, ", ".join(sorted(LORA_WHITELIST))),
+                % (name, ", ".join(sorted(LORA_ALLOWLIST))),
             )
         weight = lora.get("weight", 0.6)
         if isinstance(weight, bool) or not isinstance(weight, (int, float)):
