@@ -38,9 +38,9 @@ PARAM_KEYS = ["title", "seed", "steps", "width", "height",
               "batch", "count", "negative", "lora"]
 
 # 使える LoRA。dtq-common.sh が環境変数で渡してくる（dtq_parse.py と同じ方式）。
-LORA_WHITELIST = [
+LORA_ALLOWLIST = [
     line.strip()
-    for line in os.environ.get("DTQ_LORA_WHITELIST", "").splitlines()
+    for line in os.environ.get("DTQ_LORA_ALLOWLIST", "").splitlines()
     if line.strip()
 ] or ["realisticsnapshotz_image_turbo_lora_f16.ckpt"]
 
@@ -188,14 +188,14 @@ def resolve_lora(spec):
     if not (lo <= weight <= hi):
         raise Invalid("out_of_range", "lora の重みは %s〜%s の範囲: %s" % (lo, hi, weight))
 
-    if name in LORA_WHITELIST:
+    if name in LORA_ALLOWLIST:
         return {"file": name, "weight": weight}
-    hits = [w for w in LORA_WHITELIST if w.startswith(name)]
+    hits = [w for w in LORA_ALLOWLIST if w.startswith(name)]
     if len(hits) == 1:
         return {"file": hits[0], "weight": weight}
     if not hits:
         raise Invalid("unknown_lora",
-                      "使えない LoRA: %s（使えるのは %s）" % (name, ", ".join(LORA_WHITELIST)))
+                      "使えない LoRA: %s（使えるのは %s）" % (name, ", ".join(LORA_ALLOWLIST)))
     raise Invalid("ambiguous_lora",
                   "LoRA 名 `%s` が %d 件に一致する: %s" % (name, len(hits), ", ".join(hits)))
 
