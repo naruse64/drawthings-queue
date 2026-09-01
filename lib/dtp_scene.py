@@ -46,6 +46,9 @@ SPELL_WORDS = [
     "photorealistic:", "trending on artstation",
 ]
 
+# 日本語が含まれるか。文末記号を「。」にするか "." にするかの判定に使う。
+CJK_RE = re.compile(r"[ぁ-んァ-ヶ一-龥]")
+
 # (word:1.2) / [word] / {word} — 重み記法。このモデルは解釈しない。
 WEIGHT_RE = re.compile(r"\([^()]{1,60}:\s*[0-9]*\.?[0-9]+\s*\)|\{[^{}]{1,60}\}|\[[^\[\]]{1,60}\]")
 
@@ -89,17 +92,24 @@ def parse_scene(text):
 
 
 def compose(slots):
-    """スロットを規定順に1文ずつ並べる。日本語のまま、語順だけを保証する。"""
+    """スロットを規定順に1文ずつ並べる。翻訳はせず、語順だけを保証する。"""
     parts = []
     for name in SLOT_ORDER:
         value = slots.get(name)
         if not value:
             continue
-        # 文末が句点でなければ補う。並べたときに文の切れ目が曖昧にならないようにする。
-        if not value.endswith(("。", ".", "！", "？", "!", "?")):
+        # 文末記号は文字種で決める。英語のスロットに「。」を付けると壊れた
+        # 英文になる。日本語で書いても英語で書いても通るので、どちらも壊さない。
+        if value.endswith(("。", "！", "？")):
+            pass                          # 既に和文の文末
+        elif value.endswith((".", "!", "?")):
+            value += " "                  # 既に欧文の文末。次との間を空ける
+        elif CJK_RE.search(value):
             value += "。"
+        else:
+            value += ". "
         parts.append(value)
-    return "".join(parts)
+    return "".join(parts).strip()
 
 
 def lint(slots, prompt):
@@ -133,18 +143,10 @@ def lint(slots, prompt):
             % ", ".join(weights[:3])
         )
 
-    # タグ列の検出。組み立て後は句点が必ず付くので、スロットの生の値で見る。
-    # 短い断片が並んでいたらタグ、という判断。普通の文なら1断片が長くなる。
-    for name in SLOT_ORDER:
-        value = slots.get(name)
-        if not value or "。" in value:
-            continue
-        segs = [t.strip() for t in re.split(r"[,、]", value) if t.strip()]
-        if len(segs) >= 5 and sum(len(t) for t in segs) / len(segs) < 12:
-            warnings.append(
-                "`%s` がタグ列に見える（%d 個の短い断片）。"
-                "このモデルは自然な文章のほうが通る" % (name, len(segs))
-            )
+    # カンマ区切りの断片を警告していたが、実測で否定されたので外した（D-6）。
+    # 同じ情報量なら断片形式と散文の差はノイズ比 2.7 倍にとどまり、しかも
+    # 断片のほうが劣るわけではない。効くのは形式ではなく記述量（5.3 倍）で、
+    # それは推奨スロットの警告が既に担っている。
 
     if len(prompt) > MAX_PROMPT:
         errors.append("プロンプトが %d 文字。上限は %d" % (len(prompt), MAX_PROMPT))

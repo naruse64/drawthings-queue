@@ -27,6 +27,7 @@ usage() {
   compose <scene>            プロンプトを組み立てて出力する
   lint    <scene>            検査だけする（書き忘れ・SD1.5 語・重み記法）
   job     <scene>            dtq の job JSON を出力する
+  slots   <scene>            記入済みスロットを JSON で出す（集計用）
   ab      <scene> --slot <名> --variants <値> [<値>...]
                              1スロットだけ振って同一シードで生成し、画素差を測る
   diff    <a.png> <b.png>    生成済み2枚の画素差を測る
@@ -135,7 +136,7 @@ cmd_ab() {
 }
 
 case "${1:-}" in
-  compose|lint|job) [ $# -ge 2 ] || die "$1: シーンファイルが要る"
+  compose|lint|job|slots) [ $# -ge 2 ] || die "$1: シーンファイルが要る"
                     python3 "$SCENE_PY" "$1" "${@:2}" ;;
   ab)               [ $# -ge 2 ] || die "ab: シーンファイルが要る"
                     cmd_ab "${@:2}" ;;
