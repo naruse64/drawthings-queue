@@ -98,8 +98,11 @@ check_err "重み記法 (word:1.2)" "$f" '重み記法'
 f=$(scene weight2 '主題: 女性\n光: {逆光}\n')
 check_err "重み記法 {word}" "$f" '重み記法'
 
+# タグ列の警告は実測で否定されたので出さない（D-6）。実運用のプロンプトは
+# 7〜11 のカンマ断片で書かれており、これを毎回警告するのは雑音でしかない。
 f=$(scene tags '主題: woman, cafe, window, knit, backlit, film, bokeh\n')
-check_err "カンマ区切りのタグ列" "$f" 'タグ列に見える'
+check "カンマ断片は警告しない" "$("$DTP" lint "$f" 2>&1 | grep -c 'タグ列')" "0"
+"$DTP" lint "$f" >/dev/null 2>&1; check "  exit=0" "$?" "0"
 
 banner "9. タイプミスを黙って無視しない"
 f=$(scene typo '主題: 女性\nカメラマン: 中望遠\n')
