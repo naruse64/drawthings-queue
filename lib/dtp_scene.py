@@ -46,6 +46,9 @@ SPELL_WORDS = [
     "photorealistic:", "trending on artstation",
 ]
 
+# 日本語が含まれるか。文末記号を「。」にするか "." にするかの判定に使う。
+CJK_RE = re.compile(r"[ぁ-んァ-ヶ一-龥]")
+
 # (word:1.2) / [word] / {word} — 重み記法。このモデルは解釈しない。
 WEIGHT_RE = re.compile(r"\([^()]{1,60}:\s*[0-9]*\.?[0-9]+\s*\)|\{[^{}]{1,60}\}|\[[^\[\]]{1,60}\]")
 
@@ -89,17 +92,24 @@ def parse_scene(text):
 
 
 def compose(slots):
-    """スロットを規定順に1文ずつ並べる。日本語のまま、語順だけを保証する。"""
+    """スロットを規定順に1文ずつ並べる。翻訳はせず、語順だけを保証する。"""
     parts = []
     for name in SLOT_ORDER:
         value = slots.get(name)
         if not value:
             continue
-        # 文末が句点でなければ補う。並べたときに文の切れ目が曖昧にならないようにする。
-        if not value.endswith(("。", ".", "！", "？", "!", "?")):
+        # 文末記号は文字種で決める。英語のスロットに「。」を付けると壊れた
+        # 英文になる。日本語で書いても英語で書いても通るので、どちらも壊さない。
+        if value.endswith(("。", "！", "？")):
+            pass                          # 既に和文の文末
+        elif value.endswith((".", "!", "?")):
+            value += " "                  # 既に欧文の文末。次との間を空ける
+        elif CJK_RE.search(value):
             value += "。"
+        else:
+            value += ". "
         parts.append(value)
-    return "".join(parts)
+    return "".join(parts).strip()
 
 
 def lint(slots, prompt):
