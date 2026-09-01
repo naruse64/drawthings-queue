@@ -12,6 +12,9 @@ import re
 import sys
 from datetime import datetime, timezone
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import dtp_scene  # noqa: E402  （同じ lib/ に置いてある）
+
 MAX_PROMPT = 2000
 STEPS_RANGE = (1, 50)
 DIM_RANGE = (512, 2048)
@@ -27,9 +30,9 @@ DEFAULT_STEPS = 8
 #
 # 実体は dtq-common.sh の DT_LORAS で、環境変数として渡ってくる。
 # bash 側と二重管理すると必ずずれるため、ここでは既定値だけ持つ。
-LORA_WHITELIST = set(
+LORA_ALLOWLIST = set(
     line.strip()
-    for line in os.environ.get("DTQ_LORA_WHITELIST", "").splitlines()
+    for line in os.environ.get("DTQ_LORA_ALLOWLIST", "").splitlines()
     if line.strip()
 ) or {"realisticsnapshotz_image_turbo_lora_f16.ckpt"}
 
@@ -66,6 +69,23 @@ def want_str(value, field, maxlen):
     if len(value) > maxlen:
         raise Invalid("too_long", "%s は %d 文字まで（受け取った値: %d 文字）" % (field, maxlen, len(value)))
     return value
+
+
+# スロット名／パラメータ名＋コロンで始まる行。全角コロンも受ける。
+SCENE_HEAD_RE = re.compile(
+    r"^\s*(?:%s)\s*[:：]"
+    % "|".join(re.escape(k) for k in dtp_scene.SLOT_ORDER + dtp_scene.PARAM_KEYS)
+)
+
+
+def looks_like_scene(text):
+    """最初の内容行がスロット名で始まるか。# とその他の空行は読み飛ばす。"""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        return bool(SCENE_HEAD_RE.match(stripped))
+    return False
 
 
 def read_raw_jobs(path, name):
@@ -106,6 +126,18 @@ def read_raw_jobs(path, name):
                     raise Invalid("bad_type", "配列の %d 番目がオブジェクトでない" % i)
             return data
         raise Invalid("bad_type", "JSON のトップレベルはオブジェクトか配列にする")
+
+    # シーン記述（`主題: …` のスロット形式）。
+    #
+    # 判定は「最初の内容行がスロット名＋コロン」だけ。ゆるく判定すると
+    # 通常のプロンプトを巻き込むので、先頭1行に絞る。いったんシーンと
+    # 判定したら、以降の行が壊れていてもエラーにする（1行1プロンプトへの
+    # フォールバックはしない）。JSON と同じ fail-closed。
+    if looks_like_scene(text):
+        try:
+            return [dtp_scene.scene_to_job(text)]
+        except dtp_scene.Invalid as exc:
+            raise Invalid("invalid_scene", "シーン記述として解析できない: %s" % exc.message)
 
     # それ以外は 1行1プロンプト。空行と # 始まりは無視（§04）
     jobs = []
@@ -174,11 +206,11 @@ def normalize(raw, index):
         if extra:
             raise Invalid("unknown_field", "loras に未知のキー %s" % ", ".join(extra))
         name = lora.get("file")
-        if name not in LORA_WHITELIST:
+        if name not in LORA_ALLOWLIST:
             raise Invalid(
                 "lora_not_allowed",
                 "LoRA '%s' は許可されていない。使えるのは: %s"
-                % (name, ", ".join(sorted(LORA_WHITELIST))),
+                % (name, ", ".join(sorted(LORA_ALLOWLIST))),
             )
         weight = lora.get("weight", 0.6)
         if isinstance(weight, bool) or not isinstance(weight, (int, float)):

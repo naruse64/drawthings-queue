@@ -77,8 +77,8 @@ fi
 # 複製対象は上書きを反映してから組み立てる。
 DT_REQUIRED_MODELS=( "$DT_MODEL" "${DT_MODEL_DEPS[@]}" "${DT_LORAS[@]}" )
 
-# 検証器（python）にホワイトリストを渡す。bash 側と二重管理しないため。
-export DTQ_LORA_WHITELIST="$(printf '%s\n' "${DT_LORAS[@]}")"
+# 検証器（python）にOKリストを渡す。bash 側と二重管理しないため。
+export DTQ_LORA_ALLOWLIST="$(printf '%s\n' "${DT_LORAS[@]}")"
 
 # ---- チューニング定数（§05〜§07） ----
 SWEEP_INTERVAL="${DTQ_SWEEP_INTERVAL:-60}"   # 定期スイープ間隔（本命の検知手段）

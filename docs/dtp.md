@@ -70,8 +70,18 @@ height: 1216
 
 ### 生成パラメータ
 
-`seed` `steps` `width` `height` `count` `negative`。値の範囲は dtq と同じ。
-`width` と `height` は両方セットで指定する。
+`title` `seed` `steps` `width` `height` `batch` `count` `negative` `lora`。
+値の範囲は dtq と同じ。`width` と `height` は両方セットで指定する。
+
+`lora` は `名前:重み` をカンマ区切りで並べる。**名前は前方一致で補完する**ので、
+`zit_jpwoman01_lora_f16.ckpt` を毎回打つ必要はない。
+
+```
+lora: zit_jpwoman01:0.6, realisticsnapshotz:0.4
+```
+
+一意に定まらないときは候補を出して止める。使える LoRA は `config.local.sh` の
+`DT_LORAS` で決まる。
 
 ### 弾かれるもの
 
@@ -101,11 +111,21 @@ dtp diff    <a> <b>     # 生成済み2枚の画素差を測る
 dtp ab <scene> --slot <名> --variants <値> <値> [...]
 ```
 
-キューに流す:
+キューに流す。**シーン記述はそのままキューに置ける** — ワーカーが
+スロット形式を判別して展開する。
+
+```bash
+cp scene.txt ~/Library/Mobile\ Documents/com~apple~CloudDocs/DrawThingsQueue/queue/
+```
+
+job JSON に変換してから置いてもよい。結果は同じ。
 
 ```bash
 dtp job scene.txt > ~/Library/Mobile\ Documents/com~apple~CloudDocs/DrawThingsQueue/queue/x.json
 ```
+
+判定は「最初の内容行がスロット名＋コロン」だけを見る。いったんシーンと判定
+したら、以降の行が壊れていても**1行1プロンプトには落とさず** `failed/` に送る。
 
 ---
 
@@ -143,5 +163,4 @@ dtp ab scene.txt --slot 光 --variants "窓からの逆光" "柔らかい順光"
 
 - **翻訳** — 日本語が通るので不要（§1）
 - **語彙辞書** — 同上。効いた表現は findings.md に書き足していく
-- **dtq への組み込み** — いまは繋がない。`job` の出力を `queue/` に置けば足りる
 - **良し悪しの自動判定** — 画素差は変化量であって品質ではない
