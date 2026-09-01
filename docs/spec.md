@@ -106,11 +106,29 @@ a black cat sleeping on a stack of old books, warm afternoon light
 | `width` / `height` | int | モデル推奨（1024） | 512〜2048 の64の倍数。**両方セットで指定** |
 | `batch` | int | 1 | 1〜4。同一 seed のバリエーション |
 | `count` | int | 1 | 1〜200。seed を +1 ずつずらして反復 |
-| `loras` | array | なし | ホワイトリストのみ。`weight` 0.1〜1.0 |
+| `loras` | array | なし | OKリストのみ。`weight` 0.1〜1.0 |
 
 未知のフィールドはエラーにする。タイプミスを黙って無視しないため。
 
-**LoRA ホワイトリスト**は `config.local.sh` の `DT_LORAS` で決まる。ここに無いものは
+### シーン記述
+
+`主題: …` のスロット形式でも投入できる。判定は**最初の内容行がスロット名＋
+コロン**かどうかだけで、いったんシーンと判定したら以降の行が壊れていても
+1行1プロンプトには落とさず `failed/` に送る（JSON と同じ fail-closed）。
+
+```
+title:    Beach
+主題:     a woman in her twenties
+場所:     a seaside promenade
+光:       bright sunny weather
+negative: blurry, distorted, text
+lora:     example_style:0.6
+count:    30
+```
+
+スロットの一覧と組み立て規則は [dtp.md](dtp.md)。
+
+**使用を許可する LoRA のリスト（OKリスト）**は `config.local.sh` の `DT_LORAS` で決まる。ここに無いものは
 ジョブ検証の段階で弾く。別モデル向けの LoRA を誤って指定しても生成前に止められる。
 
 **モデルはジョブから指定できない。** 未取得のモデル名を書かれると必ず失敗し、
@@ -280,7 +298,7 @@ test/dtq-test.sh                                      # 結合テスト
 
 - 完了通知（ntfy / Pushover）
 - img2img（入力画像も queue に置く方式）
-- モデル切替のホワイトリスト解禁
+- モデル切替の解禁（使用を許可するモデルのリストを設ける）
 - 夜間限定モード（iPhone アプリとの GPU 競合を避ける）
 
 ---

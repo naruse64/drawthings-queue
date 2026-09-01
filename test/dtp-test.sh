@@ -137,11 +137,43 @@ f=$(scene badseed '主題: 女性\nseed: abc\n')
 f=$(scene bigcount '主題: 女性\ncount: 201\n')
 "$DTP" job "$f" >/dev/null 2>&1; check "count 201 はエラー（dtq と同じ上限）" "$?" "2"
 
+banner "11b. title / batch / lora"
+f=$(scene tbl '主題: 女性\ntitle: MyTitle\nbatch: 2\nlora: realisticsnapshotz:0.4\n')
+out="$("$DTP" job "$f" 2>/dev/null)"
+check "title"  "$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])')" "MyTitle"
+check "batch"  "$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["batch"])')" "2"
+check "lora が短縮名から解決される" \
+  "$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["loras"][0]["file"])')" \
+  "realisticsnapshotz_image_turbo_lora_f16.ckpt"
+check "  重み" "$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["loras"][0]["weight"])')" "0.4"
+
+f=$(scene lbad '主題: 女性\nlora: nosuch:0.5\n')
+"$DTP" job "$f" >/dev/null 2>&1; check "使えない LoRA はエラー" "$?" "2"
+# lint も同じ検証を通す。lint が通ったのにキューで弾かれる状態を作らない。
+"$DTP" lint "$f" >/dev/null 2>&1; check "  lint でも弾く" "$?" "2"
+check_err "  候補を示す" "$f" '使えるのは'
+
+f=$(scene lw '主題: 女性\nlora: realisticsnapshotz:1.5\n')
+"$DTP" job "$f" >/dev/null 2>&1; check "重みが範囲外ならエラー" "$?" "2"
+
+f=$(scene lnoc '主題: 女性\nlora: realisticsnapshotz\n')
+"$DTP" job "$f" >/dev/null 2>&1; check "重みが無ければエラー" "$?" "2"
+
+f=$(scene bbad '主題: 女性\nbatch: 5\n')
+"$DTP" job "$f" >/dev/null 2>&1; check "batch 5 はエラー" "$?" "2"
+
+# 曖昧な前方一致は候補を出して止める（既定のOKリストは2件で衝突しないので差し替える）
+printf '主題: 女性\nlora: style:0.5\n' > "$SB/amb.txt"
+r="$(DTQ_LORA_ALLOWLIST="$(printf 'style_a.ckpt\nstyle_b.ckpt\n')" \
+     python3 "$ROOT/lib/dtp_scene.py" job "$SB/amb.txt" 2>&1)"
+printf '%s\n' "$r" | grep -q '2 件に一致' && ok "曖昧な LoRA 名は止める" \
+  || bad "曖昧な LoRA 名は止める" "$r"
+
 banner "12. job JSON が dtq の検証を通る"
 f=$(scene forq '主題: 女性が座っている\n場所: 喫茶店\nseed: 1\n')
 "$DTP" job "$f" 2>/dev/null > "$SB/j.json"
 mkdir -p "$SB/out" "$SB/ledger"
-DTQ_LORA_WHITELIST="" python3 "$ROOT/lib/dtq_parse.py" \
+DTQ_LORA_ALLOWLIST="" python3 "$ROOT/lib/dtq_parse.py" \
   --src "$SB/j.json" --src-name j.json --sha8 deadbeef --mtime 1 \
   --outdir "$SB/out" --ledger "$SB/ledger" >/dev/null 2>&1
 check "dtq_parse.py が受理する" "$?" "0"

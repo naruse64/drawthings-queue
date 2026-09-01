@@ -32,7 +32,21 @@ RECOMMENDED_GROUPS = [
 ]
 
 # 生成パラメータ。スロットと混ざらないよう ASCII キーで分ける。
-PARAM_KEYS = ["seed", "steps", "width", "height", "count", "negative"]
+# キー名は dtq_parse.py の ALLOWED_KEYS に対応させる（negative と lora だけ
+# 打ちやすさを優先して短くしてある）。
+PARAM_KEYS = ["title", "seed", "steps", "width", "height",
+              "batch", "count", "negative", "lora"]
+
+# 使える LoRA。dtq-common.sh が環境変数で渡してくる（dtq_parse.py と同じ方式）。
+LORA_ALLOWLIST = [
+    line.strip()
+    for line in os.environ.get("DTQ_LORA_ALLOWLIST", "").splitlines()
+    if line.strip()
+] or ["realisticsnapshotz_image_turbo_lora_f16.ckpt"]
+
+BATCH_RANGE = (1, 4)
+WEIGHT_RANGE = (0.1, 1.0)
+MAX_TITLE = 40
 
 MAX_PROMPT = 2000
 SEED_MAX = 2 ** 31 - 1
@@ -156,6 +170,36 @@ def lint(slots, prompt):
     return errors, warnings
 
 
+def resolve_lora(spec):
+    """`名前:重み` を dtq の loras 要素にする。名前は前方一致で補完する。
+
+    実運用では `example_style_lora_f16.ckpt` のような長い名前を毎回打つことに
+    なるので、一意に定まる限り前方一致を許す。曖昧なら候補を出して止める。
+    """
+    name, sep, weight_s = spec.rpartition(":")
+    if not sep:
+        raise Invalid("bad_lora", "`lora` は `名前:重み` の形で書く: %s" % spec)
+    name, weight_s = name.strip(), weight_s.strip()
+    try:
+        weight = float(weight_s)
+    except ValueError:
+        raise Invalid("bad_lora", "`lora` の重みが数値でない: %s" % spec)
+    lo, hi = WEIGHT_RANGE
+    if not (lo <= weight <= hi):
+        raise Invalid("out_of_range", "lora の重みは %s〜%s の範囲: %s" % (lo, hi, weight))
+
+    if name in LORA_ALLOWLIST:
+        return {"file": name, "weight": weight}
+    hits = [w for w in LORA_ALLOWLIST if w.startswith(name)]
+    if len(hits) == 1:
+        return {"file": hits[0], "weight": weight}
+    if not hits:
+        raise Invalid("unknown_lora",
+                      "使えない LoRA: %s（使えるのは %s）" % (name, ", ".join(LORA_ALLOWLIST)))
+    raise Invalid("ambiguous_lora",
+                  "LoRA 名 `%s` が %d 件に一致する: %s" % (name, len(hits), ", ".join(hits)))
+
+
 def want_int(value, name, lo, hi):
     try:
         n = int(str(value).strip())
@@ -177,11 +221,36 @@ def build_job(slots, params, prompt):
             raise Invalid("bad_dims", "width と height は両方セットで指定する")
         job["width"] = want_int(params["width"], "width", 512, 2048)
         job["height"] = want_int(params["height"], "height", 512, 2048)
+    if "batch" in params:
+        job["batch"] = want_int(params["batch"], "batch", *BATCH_RANGE)
     if "count" in params:
         job["count"] = want_int(params["count"], "count", 1, 200)
     if "negative" in params:
         job["negative_prompt"] = params["negative"]
+    if "title" in params:
+        if len(params["title"]) > MAX_TITLE:
+            raise Invalid("too_long", "`title` は %d 文字まで" % MAX_TITLE)
+        job["title"] = params["title"]
+    if "lora" in params:
+        # `a:0.6, b:0.4` のようにカンマで複数指定できる
+        job["loras"] = [resolve_lora(t.strip())
+                        for t in params["lora"].split(",") if t.strip()]
     return job
+
+
+def scene_to_job(text):
+    """シーン記述のテキストを dtq の raw ジョブ辞書にする（dtq_parse から呼ぶ）。
+
+    lint のエラーだけを反映する。警告はキュー投入時に出しても読む人がいないので
+    無視する。値の範囲は dtq_parse 側でも検証されるが、ここで先に弾いたほうが
+    エラーの内容が具体的になる。
+    """
+    slots, params = parse_scene(text)
+    prompt = compose(slots)
+    errors, _ = lint(slots, prompt)
+    if errors:
+        raise Invalid("scene_invalid", " / ".join(errors))
+    return build_job(slots, params, prompt)
 
 
 def load(path):
@@ -225,18 +294,23 @@ def main():
     if errors:
         return 2
 
-    if args.mode == "lint":
-        sys.stderr.write("問題なし（%d 文字）\n" % len(prompt))
-        return 0
     if args.mode == "compose":
         print(prompt)
         return 0
+
+    # lint も job と同じくパラメータまで検証する。lint が「問題なし」と言ったのに
+    # キューで弾かれる、という状態を作らないため。
+    try:
+        job = build_job(slots, params, prompt)
+    except Invalid as exc:
+        sys.stderr.write("エラー: %s\n" % exc.message)
+        return 2
+
+    if args.mode == "lint":
+        sys.stderr.write("問題なし（%d 文字）\n" % len(prompt))
+        return 0
     if args.mode == "job":
-        try:
-            print(json.dumps(build_job(slots, params, prompt), ensure_ascii=False, indent=2))
-        except Invalid as exc:
-            sys.stderr.write("エラー: %s\n" % exc.message)
-            return 2
+        print(json.dumps(job, ensure_ascii=False, indent=2))
         return 0
 
 
