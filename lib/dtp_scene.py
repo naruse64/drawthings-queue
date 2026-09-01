@@ -226,6 +226,12 @@ def build_job(slots, params, prompt):
     if "count" in params:
         job["count"] = want_int(params["count"], "count", 1, 200)
     if "negative" in params:
+        # 長さは dtq と同じ上限。ここで見ないと lint が通ったのにキューで
+        # 弾かれることになる（lora で同じ穴を塞いだのと同じ理由）。
+        if len(params["negative"]) > MAX_PROMPT:
+            raise Invalid("too_long",
+                          "`negative` は %d 文字まで（%d 文字）"
+                          % (MAX_PROMPT, len(params["negative"])))
         job["negative_prompt"] = params["negative"]
     if "title" in params:
         if len(params["title"]) > MAX_TITLE:
