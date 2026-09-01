@@ -159,6 +159,16 @@ f=$(scene lw '主題: 女性\nlora: realisticsnapshotz:1.5\n')
 f=$(scene lnoc '主題: 女性\nlora: realisticsnapshotz\n')
 "$DTP" job "$f" >/dev/null 2>&1; check "重みが無ければエラー" "$?" "2"
 
+# negative も dtq と同じ上限で見る。lint が通ったのにキューで弾かれる状態を
+# 作らないため（lora と同じ理由）。
+f=$(scene neg '主題: 女性\nnegative: blurry, distorted, text\n')
+check "negative が載る" \
+  "$("$DTP" job "$f" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["negative_prompt"])')" \
+  "blurry, distorted, text"
+python3 -c "print('主題: x'); print('negative: ' + 'a,'*1200)" > "$SB/neglong.txt"
+"$DTP" job "$SB/neglong.txt" >/dev/null 2>&1;  check "2000文字超の negative はエラー" "$?" "2"
+"$DTP" lint "$SB/neglong.txt" >/dev/null 2>&1; check "  lint でも弾く" "$?" "2"
+
 f=$(scene bbad '主題: 女性\nbatch: 5\n')
 "$DTP" job "$f" >/dev/null 2>&1; check "batch 5 はエラー" "$?" "2"
 
