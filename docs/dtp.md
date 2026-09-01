@@ -73,6 +73,13 @@ height: 1216
 `title` `seed` `steps` `width` `height` `batch` `count` `negative` `lora`。
 値の範囲は dtq と同じ。`width` と `height` は両方セットで指定する。
 
+`negative` はモデルの推奨ネガティブプロンプトを**上書きする**（CLI の仕様）。
+指定しなければ推奨値が自動適用される。上限は本文と同じ 2000 文字。
+
+```
+negative: blurry, distorted, text
+```
+
 `lora` は `名前:重み` をカンマ区切りで並べる。**名前は前方一致で補完する**ので、
 `zit_jpwoman01_lora_f16.ckpt` を毎回打つ必要はない。
 
