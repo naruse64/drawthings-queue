@@ -656,6 +656,30 @@ check "failed に落ちる"            "$(jq -r .error_kind "$(find "$FL" -name 
 n="$(grep -c 'invocation' "$DTQ_FAKE_LOG" 2>/dev/null)"
 check "  CLI は呼ばれない"         "${n:-0}" "0"
 
+# ---------------------------------------------------------------- 24
+banner "24. dtq-status が画像原本の容量を出す"
+reset_sandbox
+printf 'a red cube\n' > "$Q/s.txt"
+sweep
+st="$("$DTQ_HOME/bin/dtq-status" 2>/dev/null)"
+printf '%s\n' "$st" | grep -q '画像原本' && ok "画像原本の行が出る" \
+  || bad "画像原本の行が出る" "$st"
+check "  枚数が合う" \
+  "$(printf '%s\n' "$st" | sed -n 's/^画像原本 : \([0-9]*\) 枚.*/\1/p')" "1"
+printf '%s\n' "$st" | grep -q '保持期間の対象外' && ok "  対象外であることを明示する" \
+  || bad "  対象外であることを明示する" "$st"
+printf '%s\n' "$st" | grep -qE 'ディスク : 空き .+ / 全体 ' && ok "ディスクの空きを出す" \
+  || bad "ディスクの空きを出す" "$st"
+# 出力をそのまま貼ることがあるので、利用者名が載らないようにする
+printf '%s\n' "$st" | grep -q "$HOME" && bad "ホームは ~ に縮める" "$st" \
+  || ok "ホームは ~ に縮める（利用者名を出さない）"
+
+# 保存先が無くても落ちない（初回起動直後など）
+reset_sandbox
+rm -rf "$SB/images"
+"$DTQ_HOME/bin/dtq-status" >/dev/null 2>&1
+check "保存先が無くても異常終了しない" "$?" "0"
+
 # ---------------------------------------------------------------- 結果
 banner "結果"
 printf '  成功 %d / 失敗 %d\n\n' "$PASS" "$FAIL"
