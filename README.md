@@ -156,7 +156,7 @@ Mac が留守中にスリープしないこと（`pmset -g` で `sleep 0` を確
 | `lib/` | 設定・入力検証・JSON 組み立て |
 | `launchd/` | plist テンプレートと app バンドルの材料 |
 | `samples/` | 入力例 |
-| `test/` | テスト（dtq 185件 / dtp 71件） |
+| `test/` | テスト（dtq 185件 / dtp 78件） |
 | `config.example.sh` | 手元設定の雛形 |
 
 ## ライセンス

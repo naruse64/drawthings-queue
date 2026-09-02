@@ -265,7 +265,7 @@ export DTQ_MODELS_DIR="$SB/models"
 export DTP_OUT_DIR="$SB/out"
 export DTP_FAKE_LOG="$SB/ab-calls.log"
 
-f=$(scene abrun '主題: 女性が座っている\n場所: 喫茶店\nseed: 424242\nwidth: 512\nheight: 512\n')
+f=$(scene abrun '主題: 女性が座っている\n場所: 喫茶店\nseed: 424242\nwidth: 512\nheight: 512\nnegative: blurry, text\nlora: realisticsnapshotz:0.4\n')
 r="$("$DTP" ab "$f" --slot 光 --variants "逆光" "順光" "斜光" 2>&1)"
 check "3変種ぶん生成される" "$(find "$SB/out" -name 'ab-*.png' | wc -l | tr -d ' ')" "3"
 check "CLI が3回呼ばれる"   "$(grep -c '^out=' "$DTP_FAKE_LOG")" "3"
@@ -277,6 +277,31 @@ check "変種の語がプロンプトに入る（逆光）" "$(grep -c 'prompt=.
 check "  順光" "$(grep -c 'prompt=.*順光' "$DTP_FAKE_LOG")" "1"
 check "  斜光" "$(grep -c 'prompt=.*斜光' "$DTP_FAKE_LOG")" "1"
 check "共通部分は全変種に入る" "$(grep -c '喫茶店。女性が座っている。' "$DTP_FAKE_LOG")" "3"
+
+# 比較の条件が実運用と変わらないよう、シーンの条件はすべて渡す
+check "negative が渡る"     "$(grep -c 'negative=\[blurry, text\]' "$DTP_FAKE_LOG")" "3"
+check "lora が渡る"         "$(grep -c 'realisticsnapshotz_image_turbo_lora_f16.ckpt' "$DTP_FAKE_LOG")" "3"
+check "  重みも渡る"        "$(grep -c '"weight": 0.4' "$DTP_FAKE_LOG")" "3"
+
+# negative も lora も無いシーンでは、空の引数を渡さない
+reset_ab() { rm -f "$DTP_FAKE_LOG"; rm -f "$SB/out"/ab-*.png; }
+reset_ab
+g=$(scene abplain '主題: 女性\nseed: 1\nwidth: 512\nheight: 512\n')
+"$DTP" ab "$g" --slot 光 --variants "逆光" "順光" >/dev/null 2>&1
+check "negative 未指定なら渡さない" "$(grep -c 'negative=\[\]' "$DTP_FAKE_LOG")" "2"
+check "lora 未指定なら渡さない"     "$(grep -c 'cfg=\[\]' "$DTP_FAKE_LOG")" "2"
+
+# count/batch は無視する（1変種1枚でないと画素比較にならない）
+reset_ab
+g=$(scene abcount '主題: 女性\nseed: 1\nwidth: 512\nheight: 512\ncount: 5\n')
+r2="$("$DTP" ab "$g" --slot 光 --variants "逆光" "順光" 2>&1)"
+check "count を無視して1変種1枚" "$(find "$SB/out" -name 'ab-*.png' | wc -l | tr -d ' ')" "2"
+printf '%s\n' "$r2" | grep -q 'count と batch を無視' && ok "  無視することを伝える" \
+  || bad "  無視することを伝える" "$r2"
+
+# 以降のテストのために元のログへ戻す
+rm -f "$DTP_FAKE_LOG"; rm -f "$SB/out"/ab-*.png
+r="$("$DTP" ab "$f" --slot 光 --variants "逆光" "順光" "斜光" 2>&1)"
 
 # 3変種なら比較は 3 通り（0-1, 0-2, 1-2）
 check "総当たりで比較する" "$(printf '%s\n' "$r" | grep -c 'vs \[')" "3"

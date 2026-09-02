@@ -168,6 +168,10 @@ dtp job scene.txt > ~/Library/Mobile\ Documents/com~apple~CloudDocs/DrawThingsQu
 
 `ab` は1スロットだけを振り、**同一シードで**生成して画素差を並べる。
 
+**シーンに書いた条件はすべて渡す** — `negative` と `lora` も含む。これが抜けると
+比較の条件が実運用と変わり、測った値を実運用の判断に使えなくなる。
+`count` と `batch` だけは無視する（1変種あたり1枚でないと画素比較にならない）。
+
 ```bash
 dtp ab scene.txt --slot 光 --variants "窓からの逆光" "柔らかい順光" "夕方の斜光"
 ```
