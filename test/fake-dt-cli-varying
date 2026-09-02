@@ -1,19 +1,21 @@
 #!/bin/bash
 # dtp の ab テスト用スタブ。プロンプト内容に応じて別の画像を書く。
 # 固定画像だと「変種ごとに生成しているか」を確かめられないため。
-OUT=""; PF=""; SEED=""; W=64; H=64
+OUT=""; PF=""; NPF=""; SEED=""; W=64; H=64; CFG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) OUT="$2"; shift 2;;
     --prompt-file) PF="$2"; shift 2;;
+    --negative-prompt-file) NPF="$2"; shift 2;;
+    --config-json) CFG="$2"; shift 2;;
     --seed) SEED="$2"; shift 2;;
     --width) W="$2"; shift 2;;
     --height) H="$2"; shift 2;;
     *) shift;;
   esac
 done
-[ -n "${DTP_FAKE_LOG:-}" ] && printf 'out=%s seed=%s w=%s h=%s prompt=[%s]\n' \
-  "$OUT" "$SEED" "$W" "$H" "$(cat "$PF" 2>/dev/null)" >> "$DTP_FAKE_LOG"
+[ -n "${DTP_FAKE_LOG:-}" ] && printf 'out=%s seed=%s w=%s h=%s cfg=[%s] negative=[%s] prompt=[%s]\n' \
+  "$OUT" "$SEED" "$W" "$H" "$CFG" "$(cat "$NPF" 2>/dev/null)" "$(cat "$PF" 2>/dev/null)" >> "$DTP_FAKE_LOG"
 /usr/bin/python3 - "$OUT" "$PF" "$W" "$H" <<'PY'
 import hashlib, os, struct, sys, zlib
 out, pf, w, h = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])

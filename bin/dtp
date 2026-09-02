@@ -50,8 +50,12 @@ EOF
 }
 
 # 生成1枚。プロンプトはファイル経由で渡す（長文と日本語の引用符事故を避ける）。
+#
+# シーンに書いた条件はすべて渡す。negative と lora が抜けていると、比較の
+# 条件が実運用と変わってしまい、測った値を実運用の判断に使えない。
 generate() {
   local prompt_file="$1" out="$2" seed="$3" steps="$4" width="$5" height="$6"
+  local negative_file="$7" config_json="$8"
   local args=(
     generate
     --model "$DT_MODEL"
@@ -63,6 +67,8 @@ generate() {
     -o "$out"
   )
   [ -n "$width" ] && args+=(--width "$width" --height "$height")
+  [ -n "$negative_file" ] && args+=(--negative-prompt-file "$negative_file")
+  [ -n "$config_json" ] && args+=(--config-json "$config_json")
   "$DT_CLI" "${args[@]}" >/dev/null 2>&1
 }
 
@@ -95,6 +101,22 @@ cmd_ab() {
   width="$(printf '%s' "$job"  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("width",""))')"
   height="$(printf '%s' "$job" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("height",""))')"
 
+  # negative はファイル経由。lora は --config-json に組み立てる。
+  local negative_file="" config_json=""
+  if printf '%s' "$job" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("negative_prompt") else 1)'; then
+    negative_file="$AB_TMP/negative.txt"
+    printf '%s' "$job" | python3 -c 'import json,sys; sys.stdout.write(json.load(sys.stdin)["negative_prompt"])' > "$negative_file"
+  fi
+  config_json="$(printf '%s' "$job" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+loras = d.get("loras")
+print(json.dumps({"loras": loras}) if loras else "")')"
+
+  # batch と count は使わない。1変種あたり1枚でないと画素比較にならない。
+  if printf '%s' "$job" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if (d.get("count",1)>1 or d.get("batch",1)>1) else 1)'; then
+    printf '注意: ab は count と batch を無視する（1変種あたり1枚で比較するため）\n\n' >&2
+  fi
+
   [ -x "$DT_CLI" ] || die "draw-things-cli が見つからない: $DT_CLI"
   mkdir -p "$OUT_DIR" || die "出力先を作れない: $OUT_DIR"
 
@@ -117,7 +139,8 @@ cmd_ab() {
     local out="$OUT_DIR/ab-$tag$i""_${seed}_${ts}.png"
     printf '  [%d] %s\n' "$i" "$v"
     printf '      %s\n' "$(cat "$pf")"
-    if ! generate "$pf" "$out" "$seed" "$steps" "$width" "$height"; then
+    if ! generate "$pf" "$out" "$seed" "$steps" "$width" "$height" \
+         "$negative_file" "$config_json"; then
       die "生成に失敗した（[$i] $v）"
     fi
     printf '      → %s\n\n' "$out"
