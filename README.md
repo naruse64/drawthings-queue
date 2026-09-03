@@ -124,6 +124,7 @@ test/dtp-test.sh               # 単体テスト
 | ファイル | 内容 |
 |---|---|
 | [docs/spec.md](docs/spec.md) | dtq の仕様。入力形式・動作・設定値・性能 |
+| [docs/output.md](docs/output.md) | **出力契約。** 下流のツールはこれだけ読めばよい |
 | [docs/dtp.md](docs/dtp.md) | dtp の仕様。シーン記述・A/B テスト |
 | [docs/findings.md](docs/findings.md) | 製造・テスト工程で判明した知見と、設計判断の理由 |
 
@@ -156,7 +157,7 @@ Mac が留守中にスリープしないこと（`pmset -g` で `sleep 0` を確
 | `lib/` | 設定・入力検証・JSON 組み立て |
 | `launchd/` | plist テンプレートと app バンドルの材料 |
 | `samples/` | 入力例 |
-| `test/` | テスト（dtq 185件 / dtp 78件） |
+| `test/` | テスト（dtq 192件 / dtp 78件） |
 | `config.example.sh` | 手元設定の雛形 |
 
 ## ライセンス
