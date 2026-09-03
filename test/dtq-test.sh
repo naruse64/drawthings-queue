@@ -680,6 +680,29 @@ rm -rf "$SB/images"
 "$DTQ_HOME/bin/dtq-status" >/dev/null 2>&1
 check "保存先が無くても異常終了しない" "$?" "0"
 
+# ---------------------------------------------------------------- 25
+banner "25. 結果 JSON は原子的に置かれる（消費者が途中を読まない）"
+reset_sandbox
+printf 'a red cube\n' > "$Q/atomic.txt"
+sweep
+check "results に .tmp が残らない"   "$(nfiles "$RS" '*.tmp*')" 0
+check "  途中書きの残骸も無い"       "$(find "$SB/state/tmp" -name '*.result.json*' 2>/dev/null | wc -l | tr -d ' ')" 0
+j="$(find "$RS" -name '*.result.json' | head -1)"
+check "  JSON として完全"           "$(jq -r .status "$j")" "success"
+
+# result.json はサムネイルより後に書かれる。これが現れた時点で参照先は揃っている。
+th="$(jq -r '.images[0].thumb' "$j")"
+check "  参照するサムネイルが実在する" "$([ -f "$SB/icloud/$th" ] && echo yes || echo no)" "yes"
+p="$(jq -r '.images[0].path' "$j")"
+check "  参照する画像が実在する"       "$([ -f "$p" ] && echo yes || echo no)" "yes"
+
+reset_sandbox
+printf '{"prompt":"x","width":1000,"height":1000}' > "$Q/bad.json"
+sweep
+e="$(find "$FL" -name '*.error.json' | head -1)"
+check "失敗 JSON も完全"             "$(jq -r .error_kind "$e")" "not_multiple_of_64"
+check "  failed に .tmp が残らない"  "$(nfiles "$FL" '*.tmp*')" 0
+
 # ---------------------------------------------------------------- 結果
 banner "結果"
 printf '  成功 %d / 失敗 %d\n\n' "$PASS" "$FAIL"

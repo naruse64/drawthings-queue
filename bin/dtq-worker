@@ -108,6 +108,14 @@ is_dataless() {
 }
 
 # 検証に落ちた投入ファイルを failed/ に送る。元ファイルも併置する（§07）。
+# JSON を原子的に置く。failed/ と results/ を監視する消費者が、書き込み途中の
+# ファイルを読まないようにするため。標準入力から受け取り、一時ファイル経由で mv する。
+put_json() {
+  local dest="$1" tmp
+  tmp="$TMP_DIR/$(basename "$dest").$$"
+  cat > "$tmp" && mv "$tmp" "$dest" 2>/dev/null || rm -f "$tmp"
+}
+
 reject() {
   local src="$1" name="$2" kind="$3" msg="$4" stamp target
   stamp="$(date '+%Y%m%d-%H%M%S')"
@@ -121,7 +129,7 @@ reject() {
     message="$msg" \
     failed_at="$(iso_now)" \
     saved_as="$(basename "$target")" \
-    > "$FAILED_DIR/${stamp}_${name}.error.json" 2>/dev/null
+    2>/dev/null | put_json "$FAILED_DIR/${stamp}_${name}.error.json"
   log_event event=job_failed stage=validation source="$name" error_kind="$kind" message="$msg"
 }
 
@@ -330,7 +338,7 @@ run_job() {
       status=failed stage=preflight error_kind=models_missing \
       message="モデルがローカルに複製されていない。dtq-setup を実行する" \
       failed_at="$(iso_now)" \
-      > "$FAILED_DIR/$job_id.error.json" 2>/dev/null
+      2>/dev/null | put_json "$FAILED_DIR/$job_id.error.json"
     cp "$jf" "$FAILED_DIR/$job_id.job.json" 2>/dev/null
     log_event event=job_failed stage=preflight job_id="$job_id" error_kind=models_missing
     rm -f "$pfile" "$nfile" 2>/dev/null
@@ -407,7 +415,7 @@ run_job() {
       started_at="$started" \
       finished_at="$ended" \
       duration_sec:="$dur" \
-      > "$FAILED_DIR/$job_id.error.json" 2>/dev/null
+      2>/dev/null | put_json "$FAILED_DIR/$job_id.error.json"
     # 元のジョブ定義も併置して、iPhone から直して置き直せるようにする（§07）。
     cp "$jf" "$FAILED_DIR/$job_id.job.json" 2>/dev/null
     log_event event=job_failed stage=generate job_id="$job_id" error_kind="$ekind" \
@@ -434,13 +442,16 @@ run_job() {
 
   "$DTQ_PY" "$DTQ_EMIT" images < "$manifest" > "$imgjson"
 
+  # 一時ファイルに書いてから mv する。results/ を監視する消費者が、
+  # 書き込み途中のファイルを読まないようにするため。result.json は
+  # サムネイルより後に書くので、これが現れた時点で参照先はすべて揃っている。
   "$DTQ_PY" "$DTQ_EMIT" compose "$jf" \
     status=success \
     "images:@$imgjson" \
     started_at="$started" \
     finished_at="$ended" \
     duration_sec:="$dur" \
-    > "$RESULTS_DIR/$job_id.result.json" 2>/dev/null
+    2>/dev/null | put_json "$RESULTS_DIR/$job_id.result.json"
 
   log "OK [$job_id] ${dur}s $(wc -l < "$manifest" | tr -d ' ')枚 → $(basename "$out")"
   # 成功していても異常に遅い場合は記録する。TCC の許可ダイアログ待ちで
