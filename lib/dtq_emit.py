@@ -89,8 +89,11 @@ def main(argv):
         for line in sys.stdin.read().splitlines():
             if not line.strip():
                 continue
-            path, _, thumb = line.partition("\t")
-            items.append({"path": path, "thumb": thumb or None})
+            parts = line.split("\t")
+            path = parts[0]
+            thumb = parts[1] if len(parts) > 1 else ""
+            sha = parts[2] if len(parts) > 2 else ""
+            items.append({"path": path, "sha256": sha or None, "thumb": thumb or None})
         sys.stdout.write(json.dumps(items, ensure_ascii=False) + "\n")
 
     elif cmd == "config":

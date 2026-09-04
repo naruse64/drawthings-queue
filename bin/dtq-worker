@@ -122,7 +122,7 @@ reject() {
   target="$FAILED_DIR/${stamp}_${name}"
   mv "$src" "$target" 2>/dev/null || cp "$src" "$target" 2>/dev/null
   "$DTQ_PY" "$DTQ_EMIT" json \
-    status=failed \
+    schema_version:=1 status=failed \
     stage=validation \
     source="$name" \
     error_kind="$kind" \
@@ -335,7 +335,7 @@ run_job() {
     log "ERROR: モデルがローカルに無い: $MODELS_DIR/$DT_MODEL"
     log "       dtq-setup を実行して取り込んでください"
     "$DTQ_PY" "$DTQ_EMIT" compose "$jf" \
-      status=failed stage=preflight error_kind=models_missing \
+      schema_version:=1 status=failed stage=preflight error_kind=models_missing \
       message="モデルがローカルに複製されていない。dtq-setup を実行する" \
       failed_at="$(iso_now)" \
       2>/dev/null | put_json "$FAILED_DIR/$job_id.error.json"
@@ -407,7 +407,7 @@ run_job() {
     [ "$rc" -eq 124 ] && ekind="timeout" || ekind="generate_failed"
     log "FAILED [$job_id] $ekind rc=$rc ${dur}s"
     "$DTQ_PY" "$DTQ_EMIT" compose "$jf" \
-      status=failed \
+      schema_version:=1 status=failed \
       stage=generate \
       error_kind="$ekind" \
       exit_code:="$rc" \
@@ -429,14 +429,18 @@ run_job() {
   manifest="$TMP_DIR/$job_id.manifest"
   imgjson="$TMP_DIR/$job_id.images.json"
   : > "$manifest"
+  local sha
   for g in "${out%.png}"*.png; do
     [ -f "$g" ] || continue
+    # 画像の内容ハッシュ。消費側がパスに依存せず同定できるようにする。
+    # 1〜2MB の PNG で数ミリ秒なので、90秒の生成に対しては無視できる。
+    sha="$(shasum -a 256 "$g" 2>/dev/null | cut -d' ' -f1)"
     thumb="$THUMBS_DIR/$(basename "${g%.png}").jpg"
     if sips -Z 512 -s format jpeg -s formatOptions 70 "$g" --out "$thumb" >/dev/null 2>&1; then
-      printf '%s\t%s\n' "$g" "thumbs/$(basename "$thumb")" >> "$manifest"
+      printf '%s\t%s\t%s\n' "$g" "thumbs/$(basename "$thumb")" "$sha" >> "$manifest"
     else
       log "WARN: サムネイル生成に失敗: $(basename "$g")"
-      printf '%s\t\n' "$g" >> "$manifest"
+      printf '%s\t\t%s\n' "$g" "$sha" >> "$manifest"
     fi
   done
 
@@ -445,8 +449,16 @@ run_job() {
   # 一時ファイルに書いてから mv する。results/ を監視する消費者が、
   # 書き込み途中のファイルを読まないようにするため。result.json は
   # サムネイルより後に書くので、これが現れた時点で参照先はすべて揃っている。
+  # 使用したベースモデルを記録する。LoRA だけ記録してベースモデルを残さないのは、
+  # 依存の一部だけを lock ファイルに書いているのと同じで、あとから
+  # 「どのモデルが原因か」を追えない。
+  local modeljson
+  modeljson="$("$DTQ_PY" -c 'import json,sys; print(json.dumps({"file": sys.argv[1]}))' "$DT_MODEL")"
+
   "$DTQ_PY" "$DTQ_EMIT" compose "$jf" \
+    schema_version:=1 \
     status=success \
+    "model:=$modeljson" \
     "images:@$imgjson" \
     started_at="$started" \
     finished_at="$ended" \
@@ -524,7 +536,12 @@ recover_running() {
 
 # §07: thumbs/ と results/ だけ保持期間で掃除する。画像原本と archive/ は消さない。
 cleanup_old() {
-  find "$THUMBS_DIR" "$RESULTS_DIR" -maxdepth 1 -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null
+  find "$THUMBS_DIR" -maxdepth 1 -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null
+  # results/ は既定で消さない。画像は永久に残るので、その来歴だけが先に消えると
+  # 「何のプロンプトから出たか」が復元不能になる。
+  if [ "$RESULTS_RETENTION_DAYS" -gt 0 ]; then
+    find "$RESULTS_DIR" -maxdepth 1 -type f -mtime "+${RESULTS_RETENTION_DAYS}" -delete 2>/dev/null
+  fi
   find "$TMP_DIR" -maxdepth 1 -type f -mtime +1 -delete 2>/dev/null
 }
 

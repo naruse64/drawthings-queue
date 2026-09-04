@@ -286,7 +286,7 @@ sweep
 check "実行対象ゼロは failed 扱い" "$(jq -r .error_kind "$(find "$FL" -name '*.error.json'|head -1)")" "empty"
 
 # ---------------------------------------------------------------- 12
-banner "12. 保持期間の掃除は thumbs/results だけ（§07）"
+banner "12. 保持期間の掃除は thumbs/ だけ（results/ は既定で消さない）"
 reset_sandbox
 echo 'retention probe' > "$Q/r.txt"
 sweep
@@ -297,9 +297,20 @@ rm -f "$SB/state/.cleanup-marker"
 ( export DTQ_SWEEP_INTERVAL=1
   "$DTQ_HOME/bin/dtq-worker" --once >/dev/null 2>&1 )
 check "古いサムネイルは消える" "$(nfiles "$TH")" 0
-check "古い結果JSONも消える"   "$(nfiles "$RS")" 0
+# 画像は永久に残るので、その来歴だけ先に消えると復元不能になる
+check "古い結果JSONは残る"     "$(nfiles "$RS")" 1
 check "画像原本は消さない"     "$(nfiles "$SB/images")" 1
 check "archive も残る"         "$(nfiles "$SB/state/archive")" 2
+
+banner "12b. results/ の保持期間は明示すれば有効になる"
+reset_sandbox
+echo 'retention opt-in' > "$Q/r2.txt"
+sweep
+touch -t 202501010000 "$RS"/*.json
+rm -f "$SB/state/.cleanup-marker"
+( export DTQ_SWEEP_INTERVAL=1 DTQ_RESULTS_RETENTION_DAYS=30
+  "$DTQ_HOME/bin/dtq-worker" --once >/dev/null 2>&1 )
+check "日数を指定すれば消える" "$(nfiles "$RS")" 0
 
 # ---------------------------------------------------------------- 13
 banner "13. ロックとプロセスの後始末（§06 直列1本の保証）"
@@ -702,6 +713,37 @@ sweep
 e="$(find "$FL" -name '*.error.json' | head -1)"
 check "失敗 JSON も完全"             "$(jq -r .error_kind "$e")" "not_multiple_of_64"
 check "  failed に .tmp が残らない"  "$(nfiles "$FL" '*.tmp*')" 0
+
+# ---------------------------------------------------------------- 26
+banner "26. 消費側向けのフィールド（model / sha256 / schema_version）"
+reset_sandbox
+printf 'a red cube\n' > "$Q/fields.txt"
+sweep
+j="$(find "$RS" -name '*.result.json' | head -1)"
+check "schema_version"        "$(jq -r .schema_version "$j")" "1"
+check "使用したモデルを記録"  "$(jq -r .model.file "$j")" "z_image_turbo_1.0_q8p.ckpt"
+
+png="$(jq -r '.images[0].path' "$j")"
+want="$(shasum -a 256 "$png" | cut -d' ' -f1)"
+check "画像の sha256 が一致"  "$(jq -r '.images[0].sha256' "$j")" "$want"
+check "  path も残る"         "$(jq -r '.images[0].path' "$j")" "$png"
+
+reset_sandbox
+printf '{"prompt":"x","width":1000,"height":1000}' > "$Q/bad2.json"
+sweep
+e="$(find "$FL" -name '*.error.json' | head -1)"
+check "失敗側にも schema_version" "$(jq -r .schema_version "$e")" "1"
+
+banner "26b. サムネイル生成に失敗しても sha256 は残る"
+reset_sandbox
+printf 'thumbless\n' > "$Q/nothumb.txt"
+chmod 500 "$TH"                     # サムネイルを書けなくする
+sweep
+chmod 755 "$TH"
+j="$(find "$RS" -name '*.result.json' | head -1)"
+check "thumb は null"          "$(jq -r '.images[0].thumb' "$j")" "null"
+check "  sha256 は入る"        "$(jq -r '.images[0].sha256 | length' "$j")" "64"
+check "  生成自体は成功扱い"   "$(jq -r .status "$j")" "success"
 
 # ---------------------------------------------------------------- 結果
 banner "結果"

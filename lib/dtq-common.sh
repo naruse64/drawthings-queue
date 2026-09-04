@@ -96,7 +96,11 @@ MAX_ATTEMPTS=2                               # 実行は最大2回（初回+リ�
 # スイープが 9〜11秒間隔で回って 40秒で上限に達してしまう（実測）。
 INTAKE_DEADLINE="${DTQ_INTAKE_DEADLINE:-900}"   # 同期・移動待ちの上限（15分）
 PARSE_DEADLINE="${DTQ_PARSE_DEADLINE:-180}"     # JSON が壊れたままの上限（3分）
-RETENTION_DAYS=30                            # thumbs/ results/ の保持日数
+# thumbs/ は容量を食うので期限を切る（実測 49KB/枚、2000枚で 98MB）。
+# results/ は 4KB/件と軽く、しかも永続する画像の唯一の来歴なので既定では消さない。
+# 画像が永久に残るのに由来が30日で消えるのは、消費側から見て逆になっていた。
+RETENTION_DAYS=30                            # thumbs/ の保持日数
+RESULTS_RETENTION_DAYS="${DTQ_RESULTS_RETENTION_DAYS:-0}"   # results/ 0 は無期限
 LOG_MAX_BYTES=$((10 * 1024 * 1024))          # 10MB でローテート
 CLEANUP_INTERVAL=21600                       # 保持期間スイープは6時間ごと
 
