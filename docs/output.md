@@ -40,6 +40,7 @@ iCloud のルートは環境変数 `DTQ_ICLOUD_ROOT`、画像の保存先は `DT
 
 ```json
 {
+  "schema_version": 1,
   "job_id": "scene-txt-a1b2c3d4-1788223421-000",
   "source": "scene.txt",
   "title": "seaside",
@@ -50,12 +51,14 @@ iCloud のルートは環境変数 `DTQ_ICLOUD_ROOT`、画像の保存先は `DT
   "width": 832,
   "height": 1216,
   "batch": 1,
+  "model": { "file": "example_base_model_f16.ckpt" },
   "loras": [{ "file": "example_style_lora_f16.ckpt", "weight": 0.6 }],
   "attempts": 1,
   "status": "success",
   "images": [
     {
       "path": "/Users/<name>/DrawThings/seaside_555001_20260901-094348.png",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "thumb": "thumbs/seaside_555001_20260901-094348.jpg"
     }
   ],
@@ -67,19 +70,27 @@ iCloud のルートは環境変数 `DTQ_ICLOUD_ROOT`、画像の保存先は `DT
 
 | フィールド | 内容 |
 |---|---|
+| `schema_version` | このキー構成の版。未知の値なら消費側で警告できる |
 | `job_id` | 一意。同じ入力を再投入しても別の値になる |
 | `source` | 投入されたファイル名。1ファイルから複数ジョブが出る |
 | `title` | 英数と `-` に正規化済み。画像ファイル名の先頭に使われる |
 | `prompt` / `negative_prompt` | 実際に渡された文字列。`negative_prompt` は `null` のことがある |
 | `seed` | 実際に使われた値。ランダム指定でも確定値が入る |
+| `model` | 使用したベースモデル。`sampler` と `cfg_scale` は記録しない（後述） |
 | `loras` | 空配列ではなく**キーごと無いことがある** |
+| `attempts` | **生成を試みた回数。** `1` は初回成功、`2` は1回失敗して再試行で成功 |
 | `status` | 成功時は常に `"success"` |
 | `images` | **配列。`batch` が2以上なら複数要素**になる |
 | `images[].path` | **絶対パス**。画像の原本 |
+| `images[].sha256` | 画像の生バイトの SHA-256。**パスに依存しない同定に使える** |
 | `images[].thumb` | **iCloud ルートからの相対パス**。`null` のことがある |
 | `duration_sec` | 整数秒 |
 
 **`path` は絶対、`thumb` は相対。** 揃っていないので注意。
+
+**`sampler` と `cfg_scale` は記録しない。** これらはモデルの推奨設定として
+`draw-things-cli` の内部で適用され、こちらからは指定も観測もしていない。
+値を書けば推測になるため、書かない。`model` が同じなら同じ推奨設定が使われる。
 
 サムネイル生成に失敗しても生成自体は成功扱いになり、その場合 `thumb` は `null`。
 
@@ -91,6 +102,7 @@ iCloud のルートは環境変数 `DTQ_ICLOUD_ROOT`、画像の保存先は `DT
 
 ```json
 {
+  "schema_version": 1,
   "job_id": "scene-txt-a1b2c3d4-1788223421-000",
   "status": "failed",
   "error_kind": "invalid_scene",
@@ -110,9 +122,14 @@ iCloud のルートは環境変数 `DTQ_ICLOUD_ROOT`、画像の保存先は `DT
 
 ## 5. 下流のツールが踏みやすい前提
 
-**`results/` と `thumbs/` は30日で自動削除される。** 画像の原本と失敗記録は消えない。
+**`thumbs/` は30日で自動削除される。`results/` は既定では消さない。**
 
-→ **`results/` を恒久的な参照元にできない。** 消費側で必要な情報を控えること。
+以前は両方まとめて30日で消していたが、画像が永久に残るのに来歴だけ先に消えるのは
+順序が逆だったため分離した。`results/` を消したい場合は
+`DTQ_RESULTS_RETENTION_DAYS` に日数を設定する（`0` は無期限）。
+
+→ ただし**消費側で永続化する設計を推奨する。** 保持は設定で変えられるうえ、
+`sha256` があればパスに依存せず後から突き合わせ直せる。
 
 **同じ seed で再生成しても、同一の画像にはならない。** GPU の浮動小数点の畳み込み
 順序が実行ごとに変わるため、画素の 85% が相違する（平均絶対差 4.85/255、
@@ -147,11 +164,12 @@ while True:
         job = json.loads(f.read_text(encoding="utf-8"))   # 途中書きは無い
         for img in job["images"]:
             original = pathlib.Path(img["path"])          # 絶対パス
+            digest = img.get("sha256")                    # パス非依存の同定に使う
             thumb = ICLOUD / img["thumb"] if img.get("thumb") else None
             ...
         seen.add(f.name)
     time.sleep(30)
 ```
 
-`results/` は30日で消えるため、`seen` をプロセス内に持つだけでは足りない。
-処理済みの記録は消費側で永続化すること。
+`results/` は既定で消えないが、保持は設定で変えられる。処理済みの記録は
+消費側で永続化し、`sha256` を主キーにするとパスの変化にも耐えられる。
