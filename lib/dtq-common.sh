@@ -101,7 +101,7 @@ PARSE_DEADLINE="${DTQ_PARSE_DEADLINE:-180}"     # JSON が壊れたままの上�
 # 画像が永久に残るのに由来が30日で消えるのは、消費側から見て逆になっていた。
 RETENTION_DAYS=30                            # thumbs/ の保持日数
 RESULTS_RETENTION_DAYS="${DTQ_RESULTS_RETENTION_DAYS:-0}"   # results/ 0 は無期限
-LOG_MAX_BYTES=$((10 * 1024 * 1024))          # 10MB でローテート
+LOG_MAX_BYTES="${DTQ_LOG_MAX_BYTES:-$((10 * 1024 * 1024))}"   # 10MB でローテート
 CLEANUP_INTERVAL=21600                       # 保持期間スイープは6時間ごと
 
 # ---- インタプリタ解決 ----
@@ -126,21 +126,53 @@ log_event() {
   "$DTQ_PY" "$DTQ_EMIT" event "$@" >> "$JSONL_FILE" 2>/dev/null || true
 }
 
+# ずらしたときだけ 0 を返す。
 rotate_one() {
   local f="$1" sz
-  [ -f "$f" ] || return 0
+  [ -f "$f" ] || return 1
   sz=$(stat -f '%z' "$f" 2>/dev/null || echo 0)
-  if [ "$sz" -gt "$LOG_MAX_BYTES" ]; then
-    rm -f "$f.2" 2>/dev/null
-    [ -f "$f.1" ] && mv "$f.1" "$f.2"
-    mv "$f" "$f.1"
-    : > "$f"
-  fi
+  [ "$sz" -gt "$LOG_MAX_BYTES" ] || return 1
+  rm -f "$f.2" 2>/dev/null
+  [ -f "$f.1" ] && mv "$f.1" "$f.2"
+  mv "$f" "$f.1"
+  : > "$f"
+  return 0
 }
 
 rotate_logs() {
-  rotate_one "$LOG_FILE"
-  rotate_one "$JSONL_FILE"
+  # launchd は起動時に LOG_FILE を開き、その fd を stdout/stderr として渡してくる。
+  # ずらしただけでは fd が .1 を指したままになり、以降の出力はすべて .1 に書かれ、
+  # LOG_FILE は空のまま残る（dtq-status や dtq-setup の起動確認が何も見えなくなる）。
+  # ずらしたら自分で開き直す。
+  if rotate_one "$LOG_FILE"; then
+    exec >>"$LOG_FILE" 2>&1
+  fi
+  rotate_one "$JSONL_FILE"   # 書くたびに開き直しているので、ずらすだけでよい
+  return 0
+}
+
+# JSON を原子的に置く。failed/ と results/ を監視する消費者が、書き込み途中の
+# ファイルを読まないようにするため。標準入力から受け取り、一時ファイル経由で mv する。
+#
+# 置く前に JSON として読めるかを確かめる。前段の組み立てが失敗すると入力は空になるが、
+# そのまま置くと「result.json が現れたら完成している」という契約（output.md §2）を
+# 破り、消費者が空のファイルを読むことになる。置けなかったら記録して 1 を返す。
+put_json() {
+  local dest="$1" tmp
+  tmp="$TMP_DIR/$(basename "$dest").$$"
+  if ! cat > "$tmp" 2>/dev/null || ! jq -e 'type == "object"' "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    log "ERROR: JSON を組み立てられず、置かなかった: $(basename "$dest")"
+    log_event event=write_failed path="$(basename "$dest")" reason=invalid_json
+    return 1
+  fi
+  if ! mv "$tmp" "$dest" 2>/dev/null; then
+    rm -f "$tmp"
+    log "ERROR: JSON を置けない: $dest"
+    log_event event=write_failed path="$(basename "$dest")" reason=move_failed
+    return 1
+  fi
+  return 0
 }
 
 ensure_dirs() {

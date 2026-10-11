@@ -63,13 +63,13 @@ clear_seen() {
   rm -f "$TRIES_DIR/$k.seen" "$TRIES_DIR/$k.logged" 2>/dev/null
 }
 
-# 同じ理由をスイープのたびに書くとログが溢れるので 30 秒に1回へ間引く。
+# 同じ理由をスイープのたびに書くとログが溢れるので間引く（既定 30 秒に1回）。
 log_waiting() {
-  local base="$1" reason="$2" age="$3" lf now last
+  local base="$1" reason="$2" age="$3" interval="${4:-30}" lf now last
   lf="$TRIES_DIR/$(seen_key "$base").logged"
   now=$(date +%s)
   last=$(cat "$lf" 2>/dev/null || echo 0)
-  if [ $((now - last)) -ge 30 ]; then
+  if [ $((now - last)) -ge "$interval" ]; then
     printf '%s' "$now" > "$lf"
     log "取り込み待ち ${age}秒: $base — $reason"
   fi
@@ -82,9 +82,15 @@ not_ready() {
   local f="$1" base="$2" reason="$3" deadline="$4" age
   age="$(seen_age "$base")"
   if [ "$age" -ge "$deadline" ]; then
-    log "ERROR: ${age}秒たっても取り込めない: $base — $reason"
-    clear_seen "$base"
-    reject "$f" "$base" "not_ready" "$reason（${age}秒待機して打ち切り）"
+    if reject "$f" "$base" "not_ready" "$reason（${age}秒待機して打ち切り）"; then
+      log "ERROR: ${age}秒たっても取り込めない: $base — $reason"
+      clear_seen "$base"
+    else
+      # 移せない原因（iCloud がつかんでいる等）は、取り込めない原因と同じことが多い。
+      # 打ち切らずに持ち越し、移せるようになった時点で failed/ へ送る。
+      # 待ちの記録を消すと期限を数え直してしまうので残す。
+      log_waiting "$base" "期限を過ぎたが failed/ へ移せない — $reason" "$age" 1800
+    fi
   else
     log_waiting "$base" "$reason" "$age"
   fi
@@ -107,21 +113,16 @@ is_dataless() {
   [ $((fl & 1073741824)) -ne 0 ]   # SF_DATALESS = 0x40000000
 }
 
-# JSON を原子的に置く。failed/ と results/ を監視する消費者が、書き込み途中の
-# ファイルを読まないようにするため。標準入力から受け取り、一時ファイル経由で mv する。
-put_json() {
-  local dest="$1" tmp
-  tmp="$TMP_DIR/$(basename "$dest").$$"
-  cat > "$tmp" && mv "$tmp" "$dest" 2>/dev/null || rm -f "$tmp"
-}
-
 # 検証に落ちた投入ファイルを failed/ に送る。何が弾かれたか確かめられるよう、
 # 元ファイルも記録として併置する。ここから再投入する運用はしない（§07）。
+#
+# 移せなければ何も書かずに 1 を返す。以前はコピーで代用していたが、queue/ の
+# ファイルだと元が残るため、期限のたびに failed/ へ複製と error.json を出し続けた。
 reject() {
   local src="$1" name="$2" kind="$3" msg="$4" stamp target
   stamp="$(date '+%Y%m%d-%H%M%S')"
   target="$FAILED_DIR/${stamp}_${name}"
-  mv "$src" "$target" 2>/dev/null || cp "$src" "$target" 2>/dev/null
+  mv "$src" "$target" 2>/dev/null || return 1
   "$DTQ_PY" "$DTQ_EMIT" json \
     schema_version:=1 status=failed \
     stage=validation \
@@ -185,7 +186,8 @@ intake() {
     [ -n "$msg" ] || msg="$out"
     log "検証エラー [$kind] $base — $msg"
     clear_seen "$base"
-    reject "$dest" "$base" "$kind" "$msg"
+    reject "$dest" "$base" "$kind" "$msg" ||
+      log "ERROR: failed/ へ移せない。$(basename "$dest") は $INCOMING_DIR に残る"
     return 0
   fi
 
@@ -305,7 +307,7 @@ run_job() {
   local jf="$1"
   local job_id title prompt_len neg seed steps width height cfg
   local started ended t0 t1 dur rc attempt stamp out errlog manifest imgjson
-  local pfile nfile g thumb ekind emsg
+  local pfile nfile g thumb ekind emsg stopped_in_wait=0
 
   job_id="$(field "$jf" job_id)"
   title="$(field "$jf" title)"
@@ -388,6 +390,12 @@ run_job() {
     fi
     log "${RETRY_WAIT}s 後に再試行 [$job_id]"
     interruptible_sleep "$RETRY_WAIT"
+    # 待ちの間に停止指示が来たら、再試行を始めずに抜ける。始めてしまうと
+    # launchd に強制終了され、実際には試していない再試行が1回分数えられる。
+    if [ "$STOPPING" = "1" ]; then
+      stopped_in_wait=1
+      break
+    fi
   done
 
   t1=$(date +%s)
@@ -397,7 +405,11 @@ run_job() {
   # 停止指示による中断は失敗ではない。ジョブ定義を running/ に残したまま抜け、
   # 次回起動時のリカバリ（§08）で再実行させる。試行回数も戻しておく。
   if [ "$STOPPING" = "1" ] && [ "$rc" -ne 0 ]; then
-    "$DTQ_PY" "$DTQ_EMIT" bump "$jf" -1 >/dev/null 2>&1
+    # 生成中に止めたなら、その試行は数えない。待ちの間に止めたなら、直前の試行は
+    # 実際に失敗しているので戻さない。
+    if [ "$stopped_in_wait" = "0" ]; then
+      "$DTQ_PY" "$DTQ_EMIT" bump "$jf" -1 >/dev/null 2>&1
+    fi
     log "停止指示により中断 [$job_id]（次回起動時に再実行する）"
     log_event event=job_interrupted job_id="$job_id"
     rm -f "$pfile" "$nfile" "$errlog" 2>/dev/null

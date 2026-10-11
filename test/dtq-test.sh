@@ -757,6 +757,73 @@ check "thumb は null"          "$(jq -r '.images[0].thumb' "$j")" "null"
 check "  sha256 は入る"        "$(jq -r '.images[0].sha256 | length' "$j")" "64"
 check "  生成自体は成功扱い"   "$(jq -r .status "$j")" "success"
 
+# ---------------------------------------------------------------- 27
+banner "27. ログをずらしたら開き直す（launchd の fd が .1 を指し続けない）"
+reset_sandbox
+export DTQ_LOG_MAX_BYTES=100
+head -c 200 /dev/zero | tr '\0' x > "$DTQ_LOG_FILE"
+echo 'after rotation' > "$Q/rot.txt"
+sweep
+unset DTQ_LOG_MAX_BYTES
+check "ずらされた"                 "$([ -f "$DTQ_LOG_FILE.1" ] && echo yes || echo no)" "yes"
+check "  以降のログは本来のファイルへ" "$(grep -c 'worker 停止' "$DTQ_LOG_FILE")" 1
+check "  .1 には書かれない"         "$(grep -c 'worker 停止' "$DTQ_LOG_FILE.1")" 0
+
+# ---------------------------------------------------------------- 28
+banner "28. 組み立てに失敗した JSON は置かない（空の result.json を出さない）"
+reset_sandbox
+pj() { ( . "$DTQ_HOME/lib/dtq-common.sh"; ensure_dirs; put_json "$1" ) >> "$DTQ_LOG_FILE" 2>&1; }
+printf ''      | pj "$RS/empty.result.json";  rc1=$?
+printf '{"a":' | pj "$RS/broken.result.json"; rc2=$?
+check "空なら置かない"           "$(nfiles "$RS")" 0
+check "  失敗を返す"             "$rc1:$rc2" "1:1"
+check "  ログに残る"             "$(grep -c 'JSON を組み立てられず' "$DTQ_LOG_FILE")" 2
+printf '{"a":1}' | pj "$RS/ok.result.json"
+check "正しい JSON は置く"       "$(nfiles "$RS")" 1
+check "  一時ファイルが残らない" "$(nfiles "$SB/state/tmp")" 0
+
+# ---------------------------------------------------------------- 29
+banner "29. 再試行の待ち中に停止したら、再試行を始めない"
+reset_sandbox
+export DTQ_SWEEP_INTERVAL=30
+export DTQ_FAKE_MODE=fail
+export DTQ_RETRY_WAIT=60
+echo 'fail then stop while waiting' > "$Q/w.txt"
+"$DTQ_HOME/bin/dtq-worker" > "$SB/logs/w.out" 2>&1 &
+W=$!
+waiting() { grep -c '後に再試行' "$SB/logs/w.out"; }
+check "再試行を待っている"     "$(poll_until 1 waiting 20)" 1
+kill -TERM $W; wait $W 2>/dev/null
+check "CLI は1回だけ呼ばれた"  "$(grep -c '^--- invocation ---$' "$DTQ_FAKE_LOG")" 1
+check "中断と記録された"       "$(grep -c '停止指示により中断' "$SB/logs/w.out")" 1
+check "ジョブは running/ に残る" "$(nfiles "$RUN" '*.job.json')" 1
+check "失敗した1回は数えたまま" "$(jq -r .attempts "$(find "$RUN" -name '*.job.json'|head -1)")" "1"
+export DTQ_RETRY_WAIT=1
+export DTQ_FAKE_MODE=ok
+"$DTQ_HOME/bin/dtq-worker" --once >/dev/null 2>&1
+check "再起動で残りの1回を使って完走する" "$(nfiles "$SB/images")" 1
+
+# ---------------------------------------------------------------- 30
+banner "30. failed/ へ移せないときは打ち切らず持ち越す（複製を出し続けない）"
+reset_sandbox
+mkdir -p "$SB/state/work/incoming"
+chmod 000 "$SB/state/work/incoming"   # 取り込みを失敗させる
+echo 'stuck in queue' > "$Q/stuck.txt"
+# iCloud がつかんでいる状態を写す。読めてコピーはできるが、queue/ から動かせない。
+chmod 555 "$Q"
+export DTQ_INTAKE_DEADLINE=0
+sweep; sweep; sweep
+check "queue に残る"                "$(nfiles "$Q" '*.txt')" 1
+check "  failed には何も出ない"     "$(nfiles "$FL")" 0
+check "  理由は間引いて記録される"  "$(grep -c 'failed/ へ移せない' "$DTQ_LOG_FILE")" 1
+chmod 755 "$Q"
+sweep
+check "移せるようになったら failed へ" "$(nfiles "$FL" '*.error.json')" 1
+check "  元ファイルは1つだけ"          "$(nfiles "$FL" '*_stuck.txt')" 1
+check "  queue から消える"             "$(nfiles "$Q" '*.txt')" 0
+chmod 755 "$SB/state/work/incoming"
+export DTQ_INTAKE_DEADLINE=900
+
 # ---------------------------------------------------------------- 結果
 banner "結果"
 printf '  成功 %d / 失敗 %d\n\n' "$PASS" "$FAIL"
