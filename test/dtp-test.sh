@@ -92,6 +92,12 @@ f=$(scene spell '主題: a woman, masterpiece, best quality\n')
 check_err "呪文トークン" "$f" 'SD1.5 系の呪文トークン'
 "$DTP" lint "$f" >/dev/null 2>&1; check "  exit=2" "$?" "2"
 
+# 語の一部には反応しない（"18k" は 8k ではない）
+f=$(scene gold '主題: 18k gold necklace on velvet\n')
+check "語の一部は呪文扱いしない" "$("$DTP" lint "$f" 2>&1 | grep -c '呪文トークン')" "0"
+f=$(scene spell8k '主題: a woman, 8k\n')
+check_err "単独の 8k は弾く" "$f" '呪文トークン: 8k'
+
 f=$(scene weight '主題: 女性\n光: (backlit:1.3) の逆光\n')
 check_err "重み記法 (word:1.2)" "$f" '重み記法'
 
@@ -252,6 +258,14 @@ check "variants が1つならエラー" "$?" "1"
 
 "$DTP" ab "$f" --variants a b >/dev/null 2>&1
 check "--slot が無ければエラー" "$?" "1"
+
+# 終了コードだけでは、CLI が見つからずに落ちた場合と区別できないので理由で見る
+f=$(scene abrand '主題: 女性\nseed: -1\n')
+check "seed -1（ランダム）はエラー" \
+  "$("$DTP" ab "$f" --slot 光 --variants a b 2>&1 >/dev/null | grep -c 'ランダム')" "1"
+f=$(scene abseed2 '主題: 女性\nseed: 1\n')
+check "  --seed -1 もエラー" \
+  "$("$DTP" ab "$f" --slot 光 --variants a b --seed -1 2>&1 >/dev/null | grep -c 'ランダム')" "1"
 
 banner "15b. slots は CLI から呼べる"
 f=$(scene slotsub '主題: 女性\n光: 逆光\n')

@@ -607,6 +607,27 @@ printf '{"prompt":"too many","seed":1,"count":201}' > "$Q/toomany.json"
 sweep
 check "201 は弾く"                     "$(jq -r .error_kind "$(find "$FL" -name '*.error.json'|head -1)")" "out_of_range"
 
+banner "22e. 展開した seed も範囲に収める・型の誤りや想定外でも理由を残す"
+reset_sandbox
+printf '{"prompt":"edge","seed":2147483645,"count":3}' > "$Q/edge.json"
+sweep
+check "最後の seed が上限ちょうどなら通る" "$(nfiles "$SB/images")" 3
+reset_sandbox
+printf '{"prompt":"over","seed":2147483647,"count":2}' > "$Q/over.json"
+sweep
+check "上限を超える展開は弾く"         "$(jq -r .error_kind "$(find "$FL" -name '*.error.json'|head -1)")" "out_of_range"
+check "  生成しない"                    "$(nfiles "$SB/images")" 0
+reset_sandbox
+printf '{"prompt":"x","title":5}' > "$Q/numtitle.json"
+sweep
+check "title が文字列でなければ bad_type" "$(jq -r .error_kind "$(find "$FL" -name '*.error.json'|head -1)")" "bad_type"
+reset_sandbox
+printf '{"prompt":"x","loras":5}' > "$Q/oddloras.json"
+sweep
+e="$(find "$FL" -name '*.error.json'|head -1)"
+check "想定外の入力は internal_error"   "$(jq -r .error_kind "$e")" "internal_error"
+check "  理由が空にならない"            "$(jq -r '.message | length > 0' "$e")" "true"
+
 # ---------------------------------------------------------------- 23
 banner "23. シーン記述（dtp のスロット形式）をキューが受ける"
 reset_sandbox

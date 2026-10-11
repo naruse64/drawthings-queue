@@ -60,6 +60,12 @@ SPELL_WORDS = [
     "photorealistic:", "trending on artstation",
 ]
 
+# 語の途中では一致させない。部分一致だと "18k gold" が 8k に引っかかり、
+# 正当なプロンプトを弾いてしまう。
+SPELL_RE = re.compile(
+    r"(?<![a-z0-9])(?:%s)(?![a-z0-9])" % "|".join(re.escape(w) for w in SPELL_WORDS)
+)
+
 # 日本語が含まれるか。文末記号を「。」にするか "." にするかの判定に使う。
 CJK_RE = re.compile(r"[ぁ-んァ-ヶ一-龥]")
 
@@ -142,8 +148,7 @@ def lint(slots, prompt):
                 % ("/".join(missing), effect, note)
             )
 
-    low = prompt.lower()
-    hit = [w for w in SPELL_WORDS if w in low]
+    hit = sorted(set(SPELL_RE.findall(prompt.lower())), key=SPELL_WORDS.index)
     if hit:
         errors.append(
             "SD1.5 系の呪文トークン: %s — このモデルのエンコーダ（Qwen3-VL）には"

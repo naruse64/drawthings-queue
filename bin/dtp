@@ -97,6 +97,8 @@ cmd_ab() {
     || { cat "$AB_TMP/joberr" >&2; exit 2; }
   [ -n "$seed" ] || seed="$(printf '%s' "$job" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("seed",""))')"
   [ -n "$seed" ] || die "ab: seed が要る。シーンに書くか --seed で渡す（同一シードでないと比較にならない）"
+  # -1 はランダム指定（dtq の慣習）。変種ごとに seed が変わり、比較にならない。
+  [ "$seed" != "-1" ] || die "ab: seed -1（ランダム）では比較にならない。固定の値を指定する"
   steps="$(printf '%s' "$job" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("steps",8))')"
   width="$(printf '%s' "$job"  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("width",""))')"
   height="$(printf '%s' "$job" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("height",""))')"

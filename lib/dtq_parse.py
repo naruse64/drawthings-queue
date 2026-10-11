@@ -164,6 +164,8 @@ def normalize(raw, index):
     if not prompt:
         raise Invalid("missing_prompt", "ジョブ %d の prompt が空" % index)
 
+    if raw.get("title") is not None:
+        want_str(raw["title"], "title", MAX_PROMPT)
     job = {
         "prompt": prompt,
         "title": slugify(raw["title"] if raw.get("title") else prompt),
@@ -232,11 +234,32 @@ def normalize(raw, index):
     count = 1
     if raw.get("count") is not None:
         count = want_int(raw["count"], "count", *COUNT_RANGE)
+    # count は seed を +1 ずつずらして展開するので、最後の seed も範囲に収める。
+    if seed is not None and seed + count - 1 > SEED_MAX:
+        raise Invalid(
+            "out_of_range",
+            "seed %d から count %d 件ずらすと上限 %d を超える（最後が %d になる）"
+            % (seed, count, SEED_MAX, seed + count - 1),
+        )
 
     return job, seed, count
 
 
 def main():
+    # 想定外の例外でも、理由を JSON で返す。トレースバックだけで落ちると
+    # ワーカーは理由を受け取れず、error.json の message が空になる。
+    try:
+        return run()
+    except Exception as exc:  # noqa: BLE001
+        print(json.dumps({
+            "ok": False,
+            "error_kind": "internal_error",
+            "message": "検証器の内部エラー: %s: %s" % (type(exc).__name__, exc),
+        }, ensure_ascii=False))
+        return 2
+
+
+def run():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", required=True)
     ap.add_argument("--src-name", required=True)
