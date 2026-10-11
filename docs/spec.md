@@ -201,7 +201,9 @@ draw-things-cli generate \
 - **結果**: `results/<job_id>.result.json` に条件・seed・所要時間・保存先
 - **失敗**: `failed/` にエラー JSON と**元のファイルを併置**。直して置き直せる
 
-`thumbs/` と `results/` は30日で自動削除。画像原本と `archive/` は削除しない。
+`thumbs/` は30日で自動削除。`results/` は既定では削除しない（消費側が来歴として
+取り込むため。`DTQ_RESULTS_RETENTION_DAYS` で日数を設定できる）。画像原本と
+`archive/` は削除しない。
 
 出力を消費する側（下流のツール）向けの契約は [output.md](output.md) に分離した。
 
