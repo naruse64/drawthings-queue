@@ -202,7 +202,9 @@ draw-things-cli generate \
 - **失敗**: `failed/` にエラー JSON と**元のファイルを併置**。失敗の内容を確かめる
   ための記録で、ここから再投入はしない。直すときはプロンプトを修正して新しく投入する
 
-`thumbs/` と `results/` は30日で自動削除。画像原本と `archive/` は削除しない。
+`thumbs/` は30日で自動削除。`results/` は既定では削除しない（消費側が来歴として
+取り込むため。`DTQ_RESULTS_RETENTION_DAYS` で日数を設定できる）。画像原本と
+`archive/` は削除しない。
 
 出力を消費する側（下流のツール）向けの契約は [output.md](output.md) に分離した。
 
