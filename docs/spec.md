@@ -199,7 +199,8 @@ draw-things-cli generate \
 - **原本**: `~/DrawThings/` に PNG。iCloud には送らない
 - **サムネイル**: `sips -Z 512` で長辺512pxのJPEG（約50KB）を `thumbs/` へ
 - **結果**: `results/<job_id>.result.json` に条件・seed・所要時間・保存先
-- **失敗**: `failed/` にエラー JSON と**元のファイルを併置**。直して置き直せる
+- **失敗**: `failed/` にエラー JSON と**元のファイルを併置**。失敗の内容を確かめる
+  ための記録で、ここから再投入はしない。直すときはプロンプトを修正して新しく投入する
 
 `thumbs/` と `results/` は30日で自動削除。画像原本と `archive/` は削除しない。
 
