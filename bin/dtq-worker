@@ -183,6 +183,7 @@ intake() {
     msg="$(printf '%s' "$out" | jq -r '.message // empty' 2>/dev/null)"
     [ -n "$kind" ] || kind="parse_error"
     [ -n "$msg" ] || msg="$out"
+    [ -n "$msg" ] || msg="検証器が理由を返さなかった（終了コード $rc）"
     log "検証エラー [$kind] $base — $msg"
     clear_seen "$base"
     reject "$dest" "$base" "$kind" "$msg"
