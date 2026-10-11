@@ -107,7 +107,6 @@ is_dataless() {
   [ $((fl & 1073741824)) -ne 0 ]   # SF_DATALESS = 0x40000000
 }
 
-# 検証に落ちた投入ファイルを failed/ に送る。元ファイルも併置する（§07）。
 # JSON を原子的に置く。failed/ と results/ を監視する消費者が、書き込み途中の
 # ファイルを読まないようにするため。標準入力から受け取り、一時ファイル経由で mv する。
 put_json() {
@@ -116,6 +115,8 @@ put_json() {
   cat > "$tmp" && mv "$tmp" "$dest" 2>/dev/null || rm -f "$tmp"
 }
 
+# 検証に落ちた投入ファイルを failed/ に送る。何が弾かれたか確かめられるよう、
+# 元ファイルも記録として併置する。ここから再投入する運用はしない（§07）。
 reject() {
   local src="$1" name="$2" kind="$3" msg="$4" stamp target
   stamp="$(date '+%Y%m%d-%H%M%S')"
@@ -424,7 +425,9 @@ run_job() {
       finished_at="$ended" \
       duration_sec:="$dur" \
       2>/dev/null | put_json "$FAILED_DIR/$job_id.error.json"
-    # 元のジョブ定義も併置して、iPhone から直して置き直せるようにする（§07）。
+    # 何を生成しようとして失敗したか確かめられるよう、元のジョブ定義も記録として
+    # 併置する。job_id や attempts を含むので、そのまま queue/ に置いても通らない。
+    # 再投入はせず、プロンプトを直して新しく投入する運用（§07）。
     cp "$jf" "$FAILED_DIR/$job_id.job.json" 2>/dev/null
     log_event event=job_failed stage=generate job_id="$job_id" error_kind="$ekind" \
               exit_code:="$rc" duration_sec:="$dur"
