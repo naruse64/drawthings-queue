@@ -16,6 +16,12 @@ check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "期待=[$3] 実際=[$2
 
 nfiles() { find "$1" -maxdepth 1 -type f ${2:+-name "$2"} 2>/dev/null | wc -l | tr -d ' '; }
 
+# error.json がどの経路でも持つキー（docs/output.md §4）。欠けているキー名を返す。
+missing_common() {
+  jq -r '[("schema_version","status","stage","error_kind","message","failed_at") as $k
+          | select(has($k) | not) | $k] | join(",")' "$1"
+}
+
 # 起動中のスタブ CLI とその子。コマンド全体を前方一致で見る。
 stub_procs()  { ps -axo command= | grep -c "^/bin/bash $STUB "; }
 stub_sleeps() { ps -axo command= | grep -c '^sleep 120$'; }
@@ -118,6 +124,7 @@ check "元ファイルとエラーが併置される"  "$(nfiles "$FL")" 2
 err="$(find "$FL" -name '*.error.json' | head -1)"
 check "  error_kind=not_ready"          "$(jq -r .error_kind "$err")" "not_ready"
 check "  理由が分かる"                  "$(jq -r .message "$err" | grep -c 'JSON')" 1
+check "  共通キーがそろう"              "$(missing_common "$err")" ""
 
 export DTQ_PARSE_DEADLINE=180
 echo 'still alive after failure' > "$Q/after.txt"
@@ -142,6 +149,8 @@ sweep
 check "attempts<2 は再実行された"      "$(nfiles "$SB/images")" 1
 check "attempts>=2 は failed に落ちた" "$(nfiles "$FL" 'x-aaaa1111-100-001.*')" 2
 check "  error_kind=interrupted"      "$(jq -r .error_kind "$FL/x-aaaa1111-100-001.error.json")" "interrupted"
+check "  共通キーがそろう"            "$(missing_common "$FL/x-aaaa1111-100-001.error.json")" ""
+check "  一時ファイルが残らない"      "$(nfiles "$FL" '*.tmp*')" 0
 check "  打ち切った方は再実行されない" "$(grep -c 'give up on me' "$DTQ_FAKE_LOG")" 0
 check "running が空になった"           "$(nfiles "$RUN")" 0
 check "再実行された方は成功" "$(jq -r .status "$(find "$RS" -name '*-000.result.json')")" "success"
@@ -244,6 +253,7 @@ check "exit_code が記録される"     "$(jq -r .exit_code "$err")" "3"
 check "stderr が残る"              "$(jq -r .stderr_tail "$err" | grep -c boom)" 1
 check "ジョブ定義も併置される"     "$(nfiles "$FL" '*.job.json')" 1
 check "attempts=2"                 "$(jq -r .attempts "$err")" "2"
+check "共通キーがそろう"           "$(missing_common "$err")" ""
 
 banner "9b. 一時的な失敗はリトライで回復する"
 reset_sandbox
@@ -267,6 +277,7 @@ t1=$(date +%s)
 err="$(find "$FL" -name '*.error.json' | head -1)"
 check "error_kind=timeout" "$(jq -r .error_kind "$err")" "timeout"
 check "exit_code=124"      "$(jq -r .exit_code "$err")" "124"
+check "共通キーがそろう"   "$(missing_common "$err")" ""
 if [ $((t1-t0)) -lt 40 ]; then ok "2秒×2回+待機で打ち切られた（実測 $((t1-t0))秒）"
 else bad "打ち切りが効いていない" "$((t1-t0))秒かかった"; fi
 check "ハングした CLI が残っていない"   "$(poll_until 0 stub_procs)" 0
@@ -484,6 +495,7 @@ err="$(find "$FL" -name '*.error.json' | head -1)"
 check "error_kind=models_missing" "$(jq -r .error_kind "$err")" "models_missing"
 check "対処法が示される"          "$(jq -r .message "$err" | grep -c 'dtq-setup')" 1
 check "リトライしない"            "$(jq -r .attempts "$err")" "0"
+check "共通キーがそろう"          "$(missing_common "$err")" ""
 
 # ---------------------------------------------------------------- 18
 banner "18. 取り込み失敗は一過性として扱う（iCloud のロック対策）"

@@ -13,7 +13,9 @@
 ```
 ~/Library/Mobile Documents/com~apple~CloudDocs/DrawThingsQueue/
 ├── results/<job_id>.result.json    成功した生成1件の記録
-├── failed/<job_id>.error.json      失敗した生成1件の記録
+├── failed/<job_id>.error.json      失敗した生成1件の記録（§4）
+│   failed/<job_id>.job.json        その元のジョブ定義
+│   failed/<日時>_<元ファイル名>     入力の検証で落ちた投入ファイルそのもの
 └── thumbs/<画像名>.jpg              長辺512pxのJPEG
 
 ~/DrawThings/<主題>_<seed>_<日時>.png   画像の原本（既定。設定で変更可）
@@ -126,25 +128,52 @@ iCloud のルートは環境変数 `DTQ_ICLOUD_ROOT`、画像の保存先は `DT
 
 ## 4. `error.json`
 
-失敗は `failed/` に出る。`result.json` とはキーが違う。
+失敗は `failed/` に出る。`result.json` とはキーが違う。`result.json` と同じく
+一時ファイル経由で置かれるので、**書き込み途中の JSON を読むことはない。**
 
 ```json
 {
   "schema_version": 1,
   "job_id": "scene-txt-a1b2c3d4-1788223421-000",
   "status": "failed",
-  "error_kind": "invalid_scene",
-  "message": "シーン記述として解析できない: `主題` は必須",
-  "failed_at": "2026-09-01T09:43:48+09:00"
+  "stage": "generate",
+  "error_kind": "timeout",
+  "message": "生成が 900 秒で終わらず、2 回試して打ち切った",
+  "failed_at": "2026-09-01T10:13:52+09:00",
+  "exit_code": 124,
+  "stderr_tail": "...",
+  "started_at": "2026-09-01T09:43:48+09:00",
+  "finished_at": "2026-09-01T10:13:51+09:00",
+  "duration_sec": 1803
 }
 ```
 
-`error_kind` は機械判定用の識別子（`invalid_json` `invalid_scene` `out_of_range`
-`not_ready` `interrupted` など）。`message` は人間向けで、**文面は予告なく変わる。
-分岐に使わないこと。**
+### どの失敗にもあるキー
 
-入力の検証で落ちた場合は `job_id` が無く、代わりに `<日時>_<元ファイル名>.error.json`
-という名前になる。
+| フィールド | 内容 |
+|---|---|
+| `schema_version` | `1` |
+| `status` | 常に `"failed"` |
+| `stage` | どの段階で落ちたか。下の表のいずれか |
+| `error_kind` | 機械判定用の識別子 |
+| `message` | 人間向けの説明。**文面は予告なく変わる。分岐に使わないこと** |
+| `failed_at` | 失敗を記録した時刻。タイムゾーン付きの ISO 8601 |
+
+### `stage` ごとの違い
+
+| `stage` | いつ | `error_kind` | 追加のキー |
+|---|---|---|---|
+| `validation` | 投入ファイルの検証 | `invalid_json` `invalid_scene` `missing_prompt` `out_of_range` `not_multiple_of_64` `not_ready` など | `source` `saved_as`。**`job_id` は無い** |
+| `preflight` | 生成前の確認 | `models_missing` | ジョブの各フィールド（`job_id` `prompt` `seed` …、`result.json` と同じ） |
+| `generate` | 生成（リトライ後） | `timeout` `generate_failed` | ジョブの各フィールド、`exit_code` `stderr_tail` `started_at` `finished_at` `duration_sec` |
+| `recovery` | 中断からの回復 | `interrupted` | ジョブの各フィールド |
+
+`validation` の `error_kind` は入力の誤りの種類ごとに細かく分かれ、増えることがある。
+**未知の値でも `stage` で大別できる。**
+
+`validation` で落ちた場合、ファイル名は `<日時>_<元ファイル名>.error.json` になり、
+投入ファイルそのものが `saved_as` の名前で隣に置かれる。それ以外の stage では
+`<job_id>.error.json` の隣に `<job_id>.job.json`（元のジョブ定義）が置かれる。
 
 ---
 

@@ -304,7 +304,7 @@ run_job() {
   local jf="$1"
   local job_id title prompt_len neg seed steps width height cfg
   local started ended t0 t1 dur rc attempt stamp out errlog manifest imgjson
-  local pfile nfile g thumb ekind
+  local pfile nfile g thumb ekind emsg
 
   job_id="$(field "$jf" job_id)"
   title="$(field "$jf" title)"
@@ -404,12 +404,20 @@ run_job() {
   fi
 
   if [ "$rc" -ne 0 ]; then
-    [ "$rc" -eq 124 ] && ekind="timeout" || ekind="generate_failed"
+    if [ "$rc" -eq 124 ]; then
+      ekind="timeout"
+      emsg="生成が ${GEN_TIMEOUT} 秒で終わらず、${attempt} 回試して打ち切った"
+    else
+      ekind="generate_failed"
+      emsg="draw-things-cli が終了コード ${rc} で失敗した（${attempt} 回試行）。詳細は stderr_tail"
+    fi
     log "FAILED [$job_id] $ekind rc=$rc ${dur}s"
     "$DTQ_PY" "$DTQ_EMIT" compose "$jf" \
       schema_version:=1 status=failed \
       stage=generate \
       error_kind="$ekind" \
+      message="$emsg" \
+      failed_at="$(iso_now)" \
       exit_code:="$rc" \
       stderr_tail="$(tail -c 2000 "$errlog" 2>/dev/null)" \
       started_at="$started" \
@@ -520,10 +528,10 @@ recover_running() {
     if [ "$attempts" -ge "$MAX_ATTEMPTS" ]; then
       log "リカバリ: 試行上限に達していたので failed へ: $base"
       "$DTQ_PY" "$DTQ_EMIT" compose "$f" \
-        status=failed stage=recovery error_kind=interrupted \
+        schema_version:=1 status=failed stage=recovery error_kind=interrupted \
         message="ワーカー中断後、試行上限に達していたため打ち切り" \
         failed_at="$(iso_now)" \
-        > "$FAILED_DIR/${job_id:-$base}.error.json" 2>/dev/null
+        2>/dev/null | put_json "$FAILED_DIR/${job_id:-$base}.error.json"
       cp "$f" "$FAILED_DIR/${job_id:-$base}.job.json" 2>/dev/null
       log_event event=job_failed stage=recovery job_id="$job_id" error_kind=interrupted
       finish_job "$f" "${job_id:-$base}"
