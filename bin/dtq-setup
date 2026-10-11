@@ -18,6 +18,13 @@ unload_agent() {
   launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null
   # 旧来の load/unload で入れていた場合の保険
   launchctl unload "$PLIST" 2>/dev/null
+  # ワーカーが実際に終わるまで待つ。直後にコードを入れ替えるので、生成後の
+  # 後処理などで居残っている間に差し替えてしまわないようにする。
+  local i=0
+  while pgrep -f "$WORKER" >/dev/null 2>&1 && [ "$i" -lt 30 ]; do
+    sleep 1
+    i=$((i + 1))
+  done
   return 0
 }
 
@@ -78,26 +85,6 @@ if [ ! -f "$Q_DIR/README" ]; then
 TXT
   echo "  README を置きました: $Q_DIR/README"
 fi
-
-echo
-echo "== 実行コードの配置 =="
-# launchd 配下のプロセスは ~/Documents や ~/Desktop を実行・読み取りできない
-# （TCC）。リポジトリをそのまま指すと Operation not permitted で起動できないため、
-# 保護対象外の場所へ配置してからそこを指す。
-mkdir -p "$APP_DIR"
-rm -rf "$APP_DIR/bin" "$APP_DIR/lib"
-cp -R "$DTQ_HOME/bin" "$DTQ_HOME/lib" "$APP_DIR/"
-chmod +x "$APP_DIR/bin/"*
-# 手元固有の設定も一緒に運ぶ。無ければリポジトリの既定値で動く。
-if [ -f "$DTQ_HOME/config.local.sh" ]; then
-  cp "$DTQ_HOME/config.local.sh" "$APP_DIR/config.local.sh"
-  echo "    config.local.sh を配置（モデル: $DT_MODEL）"
-else
-  rm -f "$APP_DIR/config.local.sh"
-  echo "    config.local.sh は無し。既定モデルで動作（$DT_MODEL）"
-fi
-echo "  $DTQ_HOME"
-echo "    → $APP_DIR （リポジトリを更新したら dtq-setup を再実行する）"
 
 echo
 echo "== モデルの取り込み =="
@@ -189,6 +176,34 @@ plutil -lint "$PLIST" >/dev/null || { echo "plist が不正です"; exit 1; }
 echo "  $PLIST"
 
 unload_agent
+
+echo
+echo "== 実行コードの配置 =="
+# launchd 配下のプロセスは ~/Documents や ~/Desktop を実行・読み取りできない
+# （TCC）。リポジトリをそのまま指すと Operation not permitted で起動できないため、
+# 保護対象外の場所へ配置してからそこを指す。
+#
+# 配置はワーカーを止めてから行う。動いている最中に入れ替えると、古い bash の
+# ワーカーが新しい lib/ の Python を呼び、消してからコピーするまでの間に
+# 呼べば失敗する。ここより前で中止した場合は、古いワーカーが古いコードのまま
+# 動き続ける。
+mkdir -p "$APP_DIR"
+rm -rf "$APP_DIR/bin" "$APP_DIR/lib"
+cp -R "$DTQ_HOME/bin" "$DTQ_HOME/lib" "$APP_DIR/"
+chmod +x "$APP_DIR/bin/"*
+# 手元固有の設定も一緒に運ぶ。無ければリポジトリの既定値で動く。
+if [ -f "$DTQ_HOME/config.local.sh" ]; then
+  cp "$DTQ_HOME/config.local.sh" "$APP_DIR/config.local.sh"
+  echo "    config.local.sh を配置（モデル: $DT_MODEL）"
+else
+  rm -f "$APP_DIR/config.local.sh"
+  echo "    config.local.sh は無し。既定モデルで動作（$DT_MODEL）"
+fi
+echo "  $DTQ_HOME"
+echo "    → $APP_DIR （リポジトリを更新したら dtq-setup を再実行する）"
+
+echo
+echo "== エージェントの起動 =="
 if launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null; then
   echo "  bootstrap 完了"
 else
