@@ -41,7 +41,7 @@ fi
 
 echo "== 依存の確認 =="
 missing=0
-for c in /usr/bin/jq /usr/bin/sips /usr/bin/shasum /usr/bin/lockf /usr/bin/brctl; do
+for c in /usr/bin/jq /usr/bin/sips /usr/bin/shasum /usr/bin/brctl; do
   if [ -x "$c" ]; then echo "  OK   $c"; else echo "  なし $c"; missing=1; fi
 done
 if [ -x "$DT_CLI" ]; then echo "  OK   $DT_CLI"; else echo "  なし $DT_CLI"; missing=1; fi
