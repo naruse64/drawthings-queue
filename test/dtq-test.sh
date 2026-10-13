@@ -540,6 +540,24 @@ check "中身が届いたら処理される"    "$(nfiles "$SB/images")" 1
 check "  queue から消える"          "$(nfiles "$Q" '*.txt')" 0
 check "  プロンプトは届いた内容"    "$(grep -c 'the content finally arrived' "$DTQ_FAKE_LOG")" 1
 
+banner "19b. queue/ から消えたファイルの待ち記録は捨てる（同名の新ファイルを即座に打ち切らない）"
+reset_sandbox
+TR="$SB/state/tries"
+printf '' > "$Q/same.txt"              # 空なので待ちに入る
+sweep
+check "待ち記録ができる"             "$(nfiles "$TR" 'same.txt.seen')" 1
+rm -f "$Q/same.txt"                    # 待っている間に利用者が消した
+printf '%s' $(( $(date +%s) - 2000 )) > "$TR/same.txt.seen"   # 期限より古い記録
+sweep
+check "消えたら記録も捨てる"         "$(nfiles "$TR")" 0
+printf '' > "$Q/same.txt"              # 後で同じ名前のファイルが来た
+sweep
+check "  同名の新しいファイルは打ち切らない" "$(nfiles "$FL")" 0
+check "  queue に残って待つ"         "$(nfiles "$Q" 'same.txt')" 1
+echo 'keep me' > "$Q/other.txt"; printf '' > "$Q/waiting.txt"
+sweep
+check "待っているファイルの記録は残す" "$(nfiles "$TR" 'waiting.txt.seen')" 1
+
 # ---------------------------------------------------------------- 20
 banner "20. seed:-1 はランダム指定として受け付ける（他ツールの慣習）"
 reset_sandbox
