@@ -155,6 +155,27 @@ check "  打ち切った方は再実行されない" "$(grep -c 'give up on me' 
 check "running が空になった"           "$(nfiles "$RUN")" 0
 check "再実行された方は成功" "$(jq -r .status "$(find "$RS" -name '*-000.result.json')")" "success"
 
+banner "4b. 取り込みの途中で落ちた入力を、起動時に展開し直す"
+reset_sandbox
+INC="$SB/state/work/incoming"; ARC="$SB/state/archive"
+mkdir -p "$INC"
+echo 'left behind in incoming' > "$INC/deadbeef-1700000000-left-over.txt"
+sweep
+check "展開して生成した"           "$(nfiles "$SB/images")" 1
+check "  incoming が空になった"     "$(nfiles "$INC")" 0
+check "  archive に移った"          "$(nfiles "$ARC" '*-left-over.txt')" 1
+r="$(find "$RS" -name '*.result.json' | head -1)"
+check "  source は元のファイル名"   "$(jq -r .source "$r")" "left-over.txt"
+check "  job_id は元の入力から作る" "$(jq -r .job_id "$r")" "left-over-txt-deadbeef-1700000000-000"
+mv "$ARC/deadbeef-1700000000-left-over.txt" "$INC/"
+sweep
+check "実行済みは二度実行しない"   "$(nfiles "$SB/images")" 1
+check "  incoming は片付く"         "$(nfiles "$INC")" 0
+echo 'not ours' > "$INC/odd-name.txt"
+sweep
+check "見覚えのない名前には触らない" "$(nfiles "$INC")" 1
+check "  記録は残す"                 "$(grep -c '見覚えのない名前' "$DTQ_LOG_FILE")" 1
+
 # ---------------------------------------------------------------- 5
 banner "5. 冪等性 — iCloud の復活は弾き、保存し直しは通す（§05）"
 reset_sandbox
