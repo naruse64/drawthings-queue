@@ -283,6 +283,21 @@ else bad "打ち切りが効いていない" "$((t1-t0))秒かかった"; fi
 check "ハングした CLI が残っていない"   "$(poll_until 0 stub_procs)" 0
 check "その子の sleep も残っていない" "$(poll_until 0 stub_sleeps)" 0
 
+banner "10b. 正常終了しても画像が無ければ失敗（画像 0 枚の成功にしない）"
+reset_sandbox
+export DTQ_FAKE_MODE=noout
+export DTQ_GEN_TIMEOUT=900
+echo 'exits cleanly but writes nothing' > "$Q/noout.txt"
+sweep
+err="$(find "$FL" -name '*.error.json' | head -1)"
+check "result.json は出ない"        "$(nfiles "$RS")" 0
+check "CLI は2回呼ばれた（再試行1回）" "$(grep -c '^--- invocation ---$' "$DTQ_FAKE_LOG")" 2
+check "error_kind=generate_failed"  "$(jq -r .error_kind "$err")" "generate_failed"
+check "  exit_code は 0 のまま"     "$(jq -r .exit_code "$err")" "0"
+check "  理由が分かる"              "$(jq -r .message "$err" | grep -c '画像が出力されなかった')" 1
+check "  共通キーがそろう"          "$(missing_common "$err")" ""
+export DTQ_FAKE_MODE=ok
+
 # ---------------------------------------------------------------- 11
 banner "11. 雑多な入力を無視する"
 reset_sandbox

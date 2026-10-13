@@ -28,6 +28,7 @@ fi
 case "${DTQ_FAKE_MODE:-ok}" in
   fail)  echo "boom: simulated failure" >&2; exit 3;;
   hang)  sleep 120; exit 0;;
+  noout) exit 0;;      # 正常終了するが画像を書かない
   flaky) # 1回目だけ失敗する
          n=$(cat "$DTQ_FAKE_LOG.count" 2>/dev/null || echo 0); n=$((n+1))
          echo "$n" > "$DTQ_FAKE_LOG.count"
