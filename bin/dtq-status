@@ -45,7 +45,9 @@ else
 fi
 
 echo
-printf 'queue    : %s 件待ち\n'   "$(count_in "$Q_DIR" -name '*.txt' -o -name '*.json')"
+# ワーカーと同じ条件で数える。拡張子は大文字小文字を区別せず、ドットで始まる
+# ファイル（iCloud のプレースホルダなど）は除く。
+printf 'queue    : %s 件待ち\n'   "$(count_in "$Q_DIR" \( -iname '*.txt' -o -iname '*.json' \) ! -name '.*')"
 printf 'pending  : %s 件展開済み\n' "$(count_in "$PENDING_DIR")"
 printf 'running  : %s 件実行中\n'  "$(count_in "$RUNNING_DIR")"
 printf 'results  : %s 件\n'        "$(count_in "$RESULTS_DIR")"

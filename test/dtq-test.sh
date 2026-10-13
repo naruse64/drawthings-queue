@@ -724,6 +724,13 @@ rm -rf "$SB/images"
 "$DTQ_HOME/bin/dtq-status" >/dev/null 2>&1
 check "保存先が無くても異常終了しない" "$?" "0"
 
+# queue の件数はワーカーと同じ条件で数える（大文字の拡張子も含め、隠しファイルは除く）
+reset_sandbox
+printf 'x\n' > "$Q/a.TXT"; printf '{}' > "$Q/b.json"; printf 'x\n' > "$Q/c.txt"
+printf 'x\n' > "$Q/.d.txt.icloud"; printf 'x\n' > "$Q/.h.txt"; printf 'x\n' > "$Q/README"; mkdir -p "$Q/e.json"
+check "queue の件数" \
+  "$("$DTQ_HOME/bin/dtq-status" 2>/dev/null | sed -n 's/^queue    : \([0-9]*\) 件待ち/\1/p')" "3"
+
 # ---------------------------------------------------------------- 25
 banner "25. 結果 JSON は原子的に置かれる（消費者が途中を読まない）"
 reset_sandbox
