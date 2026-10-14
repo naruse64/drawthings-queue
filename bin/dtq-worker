@@ -297,6 +297,15 @@ sweep_queue() {
 
 # ---------------------------------------------------------------- 実行
 
+# 出力先に PNG が1枚でもあるか。batch>1 では CLI が -0000 / -0001 を付ける。
+has_output() {
+  local g
+  for g in "${1%.png}"*.png; do
+    [ -f "$g" ] && return 0
+  done
+  return 1
+}
+
 finish_job() {
   # 台帳に記録して、ジョブ定義を保管する。成功・失敗どちらでも通る。
   local jf="$1" job_id="$2"
@@ -308,7 +317,7 @@ run_job() {
   local jf="$1"
   local job_id title prompt_len neg seed steps width height cfg
   local started ended t0 t1 dur rc attempt stamp out errlog manifest imgjson
-  local pfile nfile g thumb ekind emsg stopped_in_wait=0
+  local pfile nfile g thumb ekind emsg stopped_in_wait=0 no_output=0
 
   job_id="$(field "$jf" job_id)"
   title="$(field "$jf" title)"
@@ -380,8 +389,14 @@ run_job() {
     : > "$errlog"
     run_with_timeout "$GEN_TIMEOUT" "${cmd[@]}" >> "$errlog" 2>&1
     rc=$?
-    [ "$rc" -eq 0 ] && break
-    if [ "$rc" -eq 124 ]; then
+    no_output=0
+    if [ "$rc" -eq 0 ]; then
+      has_output "$out" && break
+      # 終了コード 0 でも画像が無ければ失敗として扱う。成功扱いにすると、
+      # images が空の result.json が「完成」として置かれてしまう。
+      no_output=1
+      log "generate は終了したが画像が無い [$job_id]"
+    elif [ "$rc" -eq 124 ]; then
       log "タイムアウト(${GEN_TIMEOUT}s) [$job_id]"
     else
       log "generate 失敗 rc=$rc [$job_id]"
@@ -405,10 +420,10 @@ run_job() {
 
   # 停止指示による中断は失敗ではない。ジョブ定義を running/ に残したまま抜け、
   # 次回起動時のリカバリ（§08）で再実行させる。試行回数も戻しておく。
-  if [ "$STOPPING" = "1" ] && [ "$rc" -ne 0 ]; then
+  if [ "$STOPPING" = "1" ] && { [ "$rc" -ne 0 ] || [ "$no_output" = "1" ]; }; then
     # 生成中に止めたなら、その試行は数えない。待ちの間に止めたなら、直前の試行は
-    # 実際に失敗しているので戻さない。
-    if [ "$stopped_in_wait" = "0" ]; then
+    # 実際に失敗しているので戻さない。画像が出なかった試行も最後まで走っている。
+    if [ "$stopped_in_wait" = "0" ] && [ "$no_output" = "0" ]; then
       "$DTQ_PY" "$DTQ_EMIT" bump "$jf" -1 >/dev/null 2>&1
     fi
     log "停止指示により中断 [$job_id]（次回起動時に再実行する）"
@@ -417,8 +432,11 @@ run_job() {
     return 0
   fi
 
-  if [ "$rc" -ne 0 ]; then
-    if [ "$rc" -eq 124 ]; then
+  if [ "$rc" -ne 0 ] || [ "$no_output" = "1" ]; then
+    if [ "$no_output" = "1" ]; then
+      ekind="generate_failed"
+      emsg="draw-things-cli は終了コード 0 で終わったが、画像が出力されなかった（${attempt} 回試行）"
+    elif [ "$rc" -eq 124 ]; then
       ekind="timeout"
       emsg="生成が ${GEN_TIMEOUT} 秒で終わらず、${attempt} 回試して打ち切った"
     else
