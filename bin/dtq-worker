@@ -137,7 +137,7 @@ reject() {
 
 # queue/ の1ファイルをローカルへ抜き、ジョブに展開する。
 intake() {
-  local f="$1" base sha8 mtime dest out rc kind msg created skipped
+  local f="$1" base sha8 mtime dest
   base="$(basename "$f")"
 
   # JSON はパースできるまで取り込まない。壊れて見えるのは同期途中の
@@ -172,6 +172,13 @@ intake() {
     return 0
   fi
   clear_seen "$base"
+  expand "$dest" "$base" "$sha8" "$mtime"
+}
+
+# incoming/ の1ファイルをジョブに展開し、archive/ へ移す。検証に落ちたら failed/ へ。
+# 通常の取り込みと、起動時の回収（recover_incoming）の両方から呼ぶ。
+expand() {
+  local dest="$1" base="$2" sha8="$3" mtime="$4" out rc kind msg created skipped
 
   out="$("$DTQ_PY" "$DTQ_PARSE" \
           --src "$dest" --src-name "$base" \
@@ -188,7 +195,7 @@ intake() {
     log "検証エラー [$kind] $base — $msg"
     clear_seen "$base"
     reject "$dest" "$base" "$kind" "$msg" ||
-      log "ERROR: failed/ へ移せない。$(basename "$dest") は $INCOMING_DIR に残る"
+      log "ERROR: failed/ へ移せない。$(basename "$dest") は $INCOMING_DIR に残し、次回起動時にやり直す"
     return 0
   fi
 
@@ -550,6 +557,32 @@ process_pending() {
 
 # ---------------------------------------------------------------- 保守
 
+# queue/ から incoming/ へ移した後、展開を終える前に強制終了されると、入力が
+# incoming/ に残る（failed/ へ移せなかった検証エラーも残る）。起動時に展開し直す。
+# 展開済みで実行済みのジョブは ledger で飛ばされ、未実行のものは同じ job_id で
+# 書き直されるだけなので、二重には実行されない。
+recover_incoming() {
+  local f name rest sha8 mtime base
+  for f in "$INCOMING_DIR"/*; do
+    [ -f "$f" ] || continue
+    # 名前は <sha8>-<mtime>-<元のファイル名>（intake を参照）。
+    name="$(basename "$f")"
+    sha8="${name%%-*}"; rest="${name#*-}"
+    mtime="${rest%%-*}"; base="${rest#*-}"
+    case "$sha8:$mtime" in
+      [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]:[0-9]*) ;;
+      *) log "ERROR: incoming/ に見覚えのない名前のファイルがある。触らずに残す: $name"
+         continue ;;
+    esac
+    case "$mtime" in *[!0-9]*)
+      log "ERROR: incoming/ に見覚えのない名前のファイルがある。触らずに残す: $name"
+      continue ;;
+    esac
+    log "リカバリ: 取り込みの途中だった入力を展開し直す: $base"
+    expand "$f" "$base" "$sha8" "$mtime"
+  done
+}
+
 # §08: 前回クラッシュ時に running/ に取り残されたジョブを回収する。
 recover_running() {
   local f base attempts job_id
@@ -619,6 +652,7 @@ run() {
     log "worker 起動 pid=$$ 検知=スイープ${SWEEP_INTERVAL}s のみ（fswatch 未導入）"
   fi
 
+  recover_incoming
   recover_running
 
   local last_cleanup=0 now
