@@ -58,6 +58,25 @@ seen_age() {
   echo $((now - first))
 }
 
+# queue/ から消えたファイルの待ち記録を捨てる。記録はファイル名で持っているので、
+# 待っている間に利用者が消すと残り続け、後で同じ名前のファイルが来たときに古い
+# 時刻から数えて即座に打ち切ってしまう。
+prune_seen() {
+  local keys="$TMP_DIR/seen-keys.$$" f k
+  : > "$keys"
+  for f in "$Q_DIR"/*; do
+    [ -f "$f" ] || continue
+    seen_key "$(basename "$f")" >> "$keys"
+    echo >> "$keys"
+  done
+  for f in "$TRIES_DIR"/*.seen "$TRIES_DIR"/*.logged; do
+    [ -f "$f" ] || continue
+    k="$(basename "$f")"; k="${k%.*}"
+    grep -Fxq -- "$k" "$keys" || rm -f "$f"
+  done
+  rm -f "$keys"
+}
+
 clear_seen() {
   local k; k="$(seen_key "$1")"
   rm -f "$TRIES_DIR/$k.seen" "$TRIES_DIR/$k.logged" 2>/dev/null
@@ -251,6 +270,10 @@ sweep_queue() {
   local list f base sig sig2 sz
   list="$TMP_DIR/sweep.$$"
   : > "$list"
+
+  # queue/ を読めることを確かめた後でだけ行う。読めないときに走らせると、
+  # 待っているファイルの記録まで消してしまう。
+  prune_seen
 
   for f in "$Q_DIR"/*; do
     [ -f "$f" ] || continue
